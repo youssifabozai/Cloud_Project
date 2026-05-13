@@ -5,6 +5,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { SNSClient } from '@aws-sdk/client-sns';
 import { SQSClient } from '@aws-sdk/client-sqs';
+import { ListTablesCommand } from '@aws-sdk/client-dynamodb';
 
 @Injectable()
 export class AwsService {
@@ -27,5 +28,22 @@ export class AwsService {
     this.s3Client = new S3Client({ region });
     this.snsClient = new SNSClient({ region });
     this.sqsClient = new SQSClient({ region });
+  }
+
+  async testConnection() {
+    try {
+      const command = new ListTablesCommand({});
+      const response = await this.dynamoDbClient.send(command);
+      return {
+        status: 'Connected successfully!',
+        tablesFound: response.TableNames,
+      };
+    } catch (error) {
+      console.error('AWS Connection Error:', error);
+      return {
+        status: 'Failed to connect.',
+        error: error.message,
+      };
+    }
   }
 }

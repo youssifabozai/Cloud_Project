@@ -3,5 +3,5 @@ import { ProjectsService } from './projects.service';
 
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(private readonly projectsService: ProjectsService) { }
 }
