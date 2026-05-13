@@ -159,10 +159,19 @@ All endpoints (except those marked as **Public**) require a valid Cognito JWT Be
   - **Purpose:** Fetches a specific user's recent activity feed (e.g., "John changed Task-1 to Done 5 mins ago"). Used for user profile pages.
   - **Roles:** Any authenticated user.
 
-### 9. Metrics & Dashboard
-*Feeds the frontend dashboard with critical statistics.*
-- **`GET /metrics/dashboard`**
-  - **Purpose:** Pulls up statistics and CloudWatch metrics (e.g., tasks created per day, tasks closed per day per team, average time-to-close, and EC2 CPU utilization).
+### 9. Metrics, Dashboard & Visualizations
+*Feeds the frontend dashboard with critical statistics and graphing data.*
+- **`GET /metrics/dashboard/summary`**
+  - **Purpose:** Pulls top-level KPI numbers (total tasks, open vs closed ratio, EC2 CPU utilization).
+  - **Roles:** `Manager`, `Admin`
+- **`GET /metrics/visualizations/time-series`**
+  - **Purpose:** Returns historical data formatted specifically for Frontend Line/Bar charts (e.g., `[{ date: '2026-05-01', created: 10, closed: 15 }]`).
+  - **Roles:** `Manager`, `Admin`
+- **`GET /metrics/visualizations/distribution`**
+  - **Purpose:** Returns categorical data formatted for Pie/Donut charts (e.g., Task counts broken down by `Status`, `Priority`, or `Assignee`).
+  - **Roles:** `Manager`, `Admin`
+- **`GET /metrics/visualizations/burndown`**
+  - **Purpose:** Calculates the agile burndown chart trajectory for a specific project or sprint.
   - **Roles:** `Manager`, `Admin`
 
 ### 10. Global Search
