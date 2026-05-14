@@ -179,3 +179,15 @@ All endpoints (except those marked as **Public**) require a valid Cognito JWT Be
 - **`GET /search`**
   - **Purpose:** Global search across Tasks, Projects, and Comments (e.g., `?q=login bug`). Enforces team-isolation constraints on the results!
   - **Roles:** Any authenticated user.
+
+### 11. Notifications (In-App)
+*Powers the frontend "Bell Icon" for user alerts.*
+- **`GET /notifications`**
+  - **Purpose:** Fetch in-app notifications for the authenticated user (e.g., "You were assigned Task-123"). Supports `?unreadOnly=true`.
+  - **Roles:** Any authenticated user.
+- **`PUT /notifications/:id/read`**
+  - **Purpose:** Mark a specific notification as read to decrease the bell icon counter.
+  - **Roles:** Any authenticated user (restricted to own notifications).
+- **`PUT /notifications/read-all`**
+  - **Purpose:** Mark all of the user's notifications as read instantly.
+  - **Roles:** Any authenticated user.
