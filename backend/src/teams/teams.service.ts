@@ -1,7 +1,7 @@
-import { Injectable, Logger, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
-import { GetCommand, QueryCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, QueryCommand, PutCommand, ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import { CreateTeamDto } from './create-team.dto';
 
@@ -9,6 +9,7 @@ import { CreateTeamDto } from './create-team.dto';
 export class TeamsService {
 	private readonly logger = new Logger(TeamsService.name);
 	private readonly teamsTableName: string;
+	private readonly usersTableName: string;
 
 	constructor(
 		private readonly configService: ConfigService,
@@ -18,6 +19,10 @@ export class TeamsService {
 		if (!this.teamsTableName) {
 			throw new Error('TABLE_TEAMS environment variable is not set');
 		}
+		this.usersTableName = this.configService.get<string>('TABLE_USERS');
+		if (!this.usersTableName) {
+			throw new Error('TABLE_USERS environment variable is not set');
+		}
 	}
 
 	private getErrorDetails(error: unknown) {
@@ -25,6 +30,35 @@ export class TeamsService {
 			return { message: error.message, stack: error.stack };
 		}
 		return { message: 'Unknown error' };
+	}
+
+	/**
+	 * Maps known AWS DynamoDB SDK errors to proper NestJS HttpExceptions.
+	 * Re-throws NestJS HttpExceptions unchanged.
+	 */
+	private handleDynamoError(error: unknown, context: string): never {
+		const { HttpException } = require('@nestjs/common');
+		if (error instanceof HttpException) throw error;
+
+		const { message, stack } = this.getErrorDetails(error);
+		this.logger.error(`[${context}] ${message}`, stack);
+
+		const code = (error as any)?.name ?? (error as any)?.__type ?? '';
+		if (code === 'ResourceNotFoundException') {
+			throw new NotFoundException('The requested DynamoDB resource was not found');
+		}
+		if (code === 'ValidationException') {
+			throw new BadRequestException(`DynamoDB validation error: ${message}`);
+		}
+		if (
+			code === 'ProvisionedThroughputExceededException' ||
+			code === 'RequestLimitExceeded' ||
+			code === 'ThrottlingException'
+		) {
+			throw new InternalServerErrorException('Service is temporarily unavailable. Please retry.');
+		}
+
+		throw new InternalServerErrorException('An unexpected error occurred. Please try again later.');
 	}
 
 	/**
@@ -38,6 +72,41 @@ export class TeamsService {
 			});
 			const result = await this.awsService.dynamoDbDocClient.send(command);
 			return result.Item || null;
+		} catch (error: unknown) {
+			const { message, stack } = this.getErrorDetails(error);
+			this.logger.error(`Error fetching team ${teamId}: ${message}`, stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Fetch a single team by id with role-based authorization.
+	 * - EMPLOYEE: can only access their own team
+	 * - MANAGER / ADMIN: can access any team
+	 */
+	async getTeamByIdForUser(teamId: string, currentUser: any) {
+		try {
+			const role = currentUser.role?.toUpperCase();
+			if (!role || !['ADMIN', 'MANAGER', 'EMPLOYEE'].includes(role)) {
+				throw new ForbiddenException('Access denied: unsupported user role');
+			}
+
+			// EMPLOYEE is restricted to their own assigned team
+			if (role === 'EMPLOYEE' && currentUser.teamId !== teamId) {
+				throw new ForbiddenException('Access denied: employees can only view their own team');
+			}
+
+			const team = await this.getTeamById(teamId);
+
+			if (!team) {
+				throw new NotFoundException(`Team ${teamId} not found`);
+			}
+
+			return {
+				success: true,
+				message: 'Team fetched successfully',
+				data: team,
+			};
 		} catch (error: unknown) {
 			const { message, stack } = this.getErrorDetails(error);
 			this.logger.error(`Error fetching team ${teamId}: ${message}`, stack);
@@ -72,7 +141,7 @@ export class TeamsService {
 		try {
 			const role = currentUser.role?.toUpperCase();
 			if (!role || !['ADMIN', 'MANAGER', 'EMPLOYEE'].includes(role)) {
-				throw new Error('Invalid or missing user role');
+				throw new ForbiddenException('Access denied: unsupported user role');
 			}
 
 			let teams: any[] = [];
@@ -110,9 +179,7 @@ export class TeamsService {
 				},
 			};
 		} catch (error: unknown) {
-			const { message, stack } = this.getErrorDetails(error);
-			this.logger.error(`Error fetching teams: ${message}`, stack);
-			throw error;
+			this.handleDynamoError(error, 'getTeams');
 		}
 	}
 
@@ -199,9 +266,64 @@ export class TeamsService {
 				data: team,
 			};
 		} catch (error: unknown) {
-			const { message, stack } = this.getErrorDetails(error);
-			this.logger.error(`Error creating team: ${message}`, stack);
-			throw error;
+			this.handleDynamoError(error, `createTeam(${dto?.name})`);
+		}
+	}
+
+	/**
+	 * Delete a team (ADMIN only).
+	 * Prevents deletion when the team still has users assigned to it.
+	 */
+	async deleteTeam(teamId: string, currentUser: any) {
+		try {
+			const role = currentUser.role?.toUpperCase();
+			if (role !== 'ADMIN') {
+				throw new ForbiddenException('Access denied: only ADMIN can delete teams');
+			}
+
+			// 1. Verify the team exists
+			const team = await this.getTeamById(teamId);
+			if (!team) {
+				throw new NotFoundException(`Team ${teamId} not found`);
+			}
+
+			// 2. Guard: refuse deletion when team still has members
+			const membersResult = await this.awsService.dynamoDbDocClient.send(
+				new QueryCommand({
+					TableName: this.usersTableName,
+					IndexName: 'teamId-index',
+					KeyConditionExpression: 'teamId = :teamId',
+					ExpressionAttributeValues: { ':teamId': teamId },
+					// We only need to know if at least one member exists
+					Limit: 1,
+					Select: 'COUNT',
+				}),
+			);
+
+			const memberCount = membersResult.Count ?? 0;
+			if (memberCount > 0) {
+				throw new ConflictException(
+					`Cannot delete team "${team.name}": it still has ${memberCount} member(s). Reassign or remove all users first.`,
+				);
+			}
+
+			// 3. Delete the team
+			await this.awsService.dynamoDbDocClient.send(
+				new DeleteCommand({
+					TableName: this.teamsTableName,
+					Key: { id: teamId },
+				}),
+			);
+
+			this.logger.log(`Team ${teamId} deleted by admin ${currentUser.userId}`);
+
+			return {
+				success: true,
+				message: `Team "${team.name}" deleted successfully`,
+				data: { teamId },
+			};
+		} catch (error: unknown) {
+			this.handleDynamoError(error, `deleteTeam(${teamId})`);
 		}
 	}
 }

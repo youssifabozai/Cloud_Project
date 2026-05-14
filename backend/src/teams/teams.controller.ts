@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './create-team.dto';
@@ -20,6 +20,23 @@ export class TeamsController {
   @Get()
   async getTeams(@CurrentUser() user: AuthenticatedUser) {
     return this.teamsService.getTeams(user);
+  }
+
+  @Get(':teamId')
+  async getTeamById(
+    @Param('teamId') teamId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teamsService.getTeamByIdForUser(teamId, user);
+  }
+
+  @Delete(':teamId')
+  @Roles('ADMIN')
+  async deleteTeam(
+    @Param('teamId') teamId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teamsService.deleteTeam(teamId, user);
   }
 
   @Post()

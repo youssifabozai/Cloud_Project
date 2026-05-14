@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
@@ -17,13 +17,45 @@ type UserRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   private readonly usersTableName: string;
+  private readonly teamsTableName: string;
 
   private getErrorDetails(error: unknown): { message: string; stack?: string } {
     if (error instanceof Error) {
       return { message: error.message, stack: error.stack };
     }
-
     return { message: 'Unknown error' };
+  }
+
+  /**
+   * Maps known AWS DynamoDB SDK errors to proper NestJS HttpExceptions.
+   * Re-throws NestJS HttpExceptions unchanged so business logic exceptions
+   * (ForbiddenException, NotFoundException, etc.) are never swallowed.
+   */
+  private handleDynamoError(error: unknown, context: string): never {
+    // Re-throw HttpExceptions as-is (ForbiddenException, NotFoundException, etc.)
+    const { HttpException } = require('@nestjs/common');
+    if (error instanceof HttpException) throw error;
+
+    const { message, stack } = this.getErrorDetails(error);
+    this.logger.error(`[${context}] ${message}`, stack);
+
+    // Map known AWS SDK error codes
+    const code = (error as any)?.name ?? (error as any)?.__type ?? '';
+    if (code === 'ResourceNotFoundException') {
+      throw new NotFoundException('The requested DynamoDB resource was not found');
+    }
+    if (code === 'ValidationException') {
+      throw new BadRequestException(`DynamoDB validation error: ${message}`);
+    }
+    if (
+      code === 'ProvisionedThroughputExceededException' ||
+      code === 'RequestLimitExceeded' ||
+      code === 'ThrottlingException'
+    ) {
+      throw new InternalServerErrorException('Service is temporarily unavailable. Please retry.');
+    }
+
+    throw new InternalServerErrorException('An unexpected error occurred. Please try again later.');
   }
 
   private normalizeRole(role: string): UserRole | null {
@@ -103,6 +135,10 @@ export class UsersService {
     this.usersTableName = this.configService.get<string>('TABLE_USERS');
     if (!this.usersTableName) {
       throw new Error('TABLE_USERS environment variable is not set');
+    }
+    this.teamsTableName = this.configService.get<string>('TABLE_TEAMS');
+    if (!this.teamsTableName) {
+      throw new Error('TABLE_TEAMS environment variable is not set');
     }
   }
 
@@ -236,19 +272,25 @@ export class UsersService {
   }
 
   async getCurrentUserProfile(currentUser: AuthenticatedUser) {
-    const userRecord = await this.getUserById(currentUser.userId);
-
-    return {
-      success: true,
-      message: 'Current user profile fetched successfully',
-      data: {
-        userId: currentUser.userId,
-        role: currentUser.role,
-        teamId: currentUser.teamId,
-        email: currentUser.email,
-        profile: userRecord,
-      },
-    };
+    try {
+      const userRecord = await this.getUserById(currentUser.userId);
+      if (!userRecord) {
+        throw new NotFoundException(`User ${currentUser.userId} not found`);
+      }
+      return {
+        success: true,
+        message: 'Current user profile fetched successfully',
+        data: {
+          userId: currentUser.userId,
+          role: currentUser.role,
+          teamId: currentUser.teamId,
+          email: currentUser.email,
+          profile: userRecord,
+        },
+      };
+    } catch (error: unknown) {
+      this.handleDynamoError(error, 'getCurrentUserProfile');
+    }
   }
 
   async getUsers(currentUser: AuthenticatedUser) {
@@ -329,24 +371,29 @@ export class UsersService {
         throw new ForbiddenException('Only ADMIN users can assign teams');
       }
 
-      // Validate team existence in DynamoDB
-      const teamsTable = this.configService.get<string>('TABLE_TEAMS');
-      if (!teamsTable) {
-        throw new Error('TABLE_TEAMS environment variable is not set');
+      if (!userId?.trim()) {
+        throw new BadRequestException('userId is required');
+      }
+      if (!teamId?.trim()) {
+        throw new BadRequestException('teamId is required');
       }
 
+      // Validate team existence using the already-resolved table name
       const teamGet = new GetCommand({
-        TableName: teamsTable,
+        TableName: this.teamsTableName,
         Key: { id: teamId },
       });
       const teamResult = await this.awsService.dynamoDbDocClient.send(teamGet);
       if (!teamResult.Item) {
-        const message = `Team ${teamId} not found`;
-        this.logger.warn(message);
-        throw new NotFoundException(message);
+        throw new NotFoundException(`Team ${teamId} not found`);
       }
 
-      // Update user's teamId
+      // Validate user existence
+      const userRecord = await this.getUserById(userId);
+      if (!userRecord) {
+        throw new NotFoundException(`User ${userId} not found`);
+      }
+
       const updated = await this.updateUser(userId, { teamId });
 
       return {
@@ -355,9 +402,7 @@ export class UsersService {
         data: updated,
       };
     } catch (error: unknown) {
-      const { message, stack } = this.getErrorDetails(error);
-      this.logger.error(`Error assigning user ${userId} to team ${teamId}: ${message}`, stack);
-      throw error;
+      this.handleDynamoError(error, `assignUserToTeam(${userId}, ${teamId})`);
     }
   }
 
@@ -371,9 +416,18 @@ export class UsersService {
         throw new ForbiddenException('Only ADMIN users can change roles');
       }
 
+      if (!userId?.trim()) {
+        throw new BadRequestException('userId is required');
+      }
+
       const newRole = this.normalizeRole(role);
       if (!newRole) {
-        throw new Error('Invalid role');
+        throw new BadRequestException(`Invalid role "${role}". Must be one of: ADMIN, MANAGER, EMPLOYEE`);
+      }
+
+      const userRecord = await this.getUserById(userId);
+      if (!userRecord) {
+        throw new NotFoundException(`User ${userId} not found`);
       }
 
       const updated = await this.updateUser(userId, { role: newRole });
@@ -384,12 +438,7 @@ export class UsersService {
         data: updated,
       };
     } catch (error: unknown) {
-      const { message, stack } = this.getErrorDetails(error);
-      this.logger.error(`Error assigning role to user ${userId}: ${message}`, stack);
-      if (message === 'Invalid role') {
-        throw new ForbiddenException('Invalid role specified');
-      }
-      throw error;
+      this.handleDynamoError(error, `assignUserRole(${userId})`);
     }
   }
 
@@ -404,13 +453,11 @@ export class UsersService {
       if (!role) {
         throw new ForbiddenException('Access denied: unsupported user role');
       }
-
       if (role !== 'ADMIN' && role !== 'MANAGER') {
-        throw new ForbiddenException('Access denied: insufficient permissions');
+        throw new ForbiddenException('Access denied: only ADMIN and MANAGER can view team members');
       }
-
-      if (!teamId) {
-        throw new Error('teamId parameter is required');
+      if (!teamId?.trim()) {
+        throw new BadRequestException('teamId parameter is required');
       }
 
       const users = await this.getUsersByTeam(teamId);
@@ -425,8 +472,261 @@ export class UsersService {
         },
       };
     } catch (error: unknown) {
+      this.handleDynamoError(error, `getUsersForTeam(${teamId})`);
+    }
+  }
+
+  /**
+   * Elevate a user to ADMIN. Only ADMIN may perform this action.
+   * Business rules:
+   *  - Caller must be ADMIN.
+   *  - Target user must exist.
+   *  - Prevent duplicate admin elevation.
+   */
+  async elevateToAdmin(userId: string, currentUser: AuthenticatedUser) {
+    try {
+      const callerRole = this.normalizeRole(currentUser.role);
+      if (callerRole !== 'ADMIN') {
+        throw new ForbiddenException('Access denied: only ADMIN users can elevate accounts');
+      }
+
+      if (!userId?.trim()) {
+        throw new BadRequestException('userId parameter is required');
+      }
+
+      // Verify the target user exists
+      const targetUser = await this.getUserById(userId);
+      if (!targetUser) {
+        throw new NotFoundException(`User ${userId} not found`);
+      }
+
+      // Prevent duplicate elevation
+      const targetRole = this.normalizeRole(targetUser.role ?? '');
+      if (targetRole === 'ADMIN') {
+        throw new BadRequestException(`User ${userId} is already an ADMIN`);
+      }
+
+      const updated = await this.updateUser(userId, { role: 'ADMIN' });
+
+      this.logger.log(`User ${userId} elevated to ADMIN by admin ${currentUser.userId}`);
+
+      return {
+        success: true,
+        message: `User ${userId} elevated to ADMIN successfully`,
+        data: updated,
+      };
+    } catch (error: unknown) {
+      this.handleDynamoError(error, `elevateToAdmin(${userId})`);
+    }
+  }
+
+  /**
+   * Delete a user by ID. Only ADMIN may perform this action.
+   * Business rules:
+   *  - Caller must be ADMIN.
+   *  - Target user must exist.
+   *  - ADMIN cannot delete themselves.
+   *  - ADMIN cannot delete other ADMIN accounts.
+   */
+  async removeUser(userId: string, currentUser: AuthenticatedUser) {
+    try {
+      const callerRole = this.normalizeRole(currentUser.role);
+      if (callerRole !== 'ADMIN') {
+        throw new ForbiddenException('Access denied: only ADMIN users can delete accounts');
+      }
+
+      if (!userId?.trim()) {
+        throw new BadRequestException('userId parameter is required');
+      }
+
+      // Prevent self-deletion
+      if (currentUser.userId === userId) {
+        throw new BadRequestException('You cannot delete your own account');
+      }
+
+      // Verify the target user exists
+      const targetUser = await this.getUserById(userId);
+      if (!targetUser) {
+        throw new NotFoundException(`User ${userId} not found`);
+      }
+
+      // Prevent deleting other ADMIN accounts
+      const targetRole = this.normalizeRole(targetUser.role ?? '');
+      if (targetRole === 'ADMIN') {
+        throw new ForbiddenException('Cannot delete an ADMIN account');
+      }
+
+      await this.deleteUser(userId);
+
+      this.logger.log(`User ${userId} deleted by admin ${currentUser.userId}`);
+
+      return {
+        success: true,
+        message: `User ${userId} deleted successfully`,
+      };
+    } catch (error: unknown) {
+      this.handleDynamoError(error, `removeUser(${userId})`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Org Chart
+
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch all teams from DynamoDB (paginated scan).
+   */
+  private async getAllTeams(): Promise<any[]> {
+    const teams: any[] = [];
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+
+    do {
+      const command = new ScanCommand({
+        TableName: this.teamsTableName,
+        ExclusiveStartKey: lastEvaluatedKey,
+      });
+      const result = await this.awsService.dynamoDbDocClient.send(command);
+      if (result.Items?.length) {
+        teams.push(...result.Items);
+      }
+      lastEvaluatedKey = result.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    return teams;
+  }
+
+  /**
+   * Strip sensitive fields from a user object for EMPLOYEE-scoped responses.
+   */
+  private toPublicUser(user: any) {
+    return {
+      userId: user.id,
+      fullName: user.fullName ?? null,
+      email: user.email,
+      role: user.role,
+      teamId: user.teamId ?? null,
+      avatar: user.avatar ?? null,
+    };
+  }
+
+  /**
+   * Return the full user record minus the password hash.
+   */
+  private toFullUser(user: any) {
+    const { passwordHash, password, ...rest } = user;
+    return { ...rest, userId: user.id };
+  }
+
+  /**
+   * Build and return the hierarchical org chart.
+   *
+   * - ADMIN / MANAGER  → full tree: admins, managers, teams with members
+   * - EMPLOYEE         → restricted view: own team only, public fields only
+   */
+  async getOrgChart(currentUser: AuthenticatedUser) {
+    try {
+      const role = this.normalizeRole(currentUser.role);
+      if (!role) {
+        throw new ForbiddenException('Access denied: unsupported user role');
+      }
+
+      // Fetch all users and all teams in parallel
+      const [allUsers, allTeams] = await Promise.all([
+        this.getAllUsers(),
+        this.getAllTeams(),
+      ]);
+
+      // ── EMPLOYEE: restricted single-team view ─────────────────────────────
+      if (role === 'EMPLOYEE') {
+        if (!currentUser.teamId) {
+          return {
+            success: true,
+            message: 'Org chart (restricted view): employee has no assigned team',
+            data: {
+              scope: 'TEAM',
+              team: null,
+              members: [],
+            },
+          };
+        }
+
+        const ownTeam = allTeams.find((t) => t.id === currentUser.teamId) ?? null;
+        const teamMembers = allUsers
+          .filter((u) => u.teamId === currentUser.teamId)
+          .map((u) => this.toPublicUser(u));
+
+        return {
+          success: true,
+          message: 'Org chart (restricted view)',
+          data: {
+            scope: 'TEAM',
+            team: ownTeam
+              ? { teamId: ownTeam.id, name: ownTeam.name, description: ownTeam.description ?? null }
+              : null,
+            members: teamMembers,
+          },
+        };
+      }
+
+      // ── ADMIN / MANAGER: full org tree ────────────────────────────────────
+
+      // Bucket users by role
+      const admins = allUsers
+        .filter((u) => u.role?.toUpperCase() === 'ADMIN')
+        .map((u) => this.toFullUser(u));
+
+      const managers = allUsers
+        .filter((u) => u.role?.toUpperCase() === 'MANAGER')
+        .map((u) => this.toFullUser(u));
+
+      // Build a map of teamId → team metadata + members
+      const teamMap = new Map<string, any>();
+      for (const team of allTeams) {
+        teamMap.set(team.id, {
+          teamId: team.id,
+          name: team.name,
+          description: team.description ?? null,
+          createdAt: team.createdAt,
+          updatedAt: team.updatedAt,
+          createdBy: team.createdBy ?? null,
+          members: [],
+        });
+      }
+
+      // Assign employees to their teams
+      const unassigned: any[] = [];
+      for (const user of allUsers) {
+        const userRole = user.role?.toUpperCase();
+        if (userRole !== 'EMPLOYEE') continue;
+
+        if (user.teamId && teamMap.has(user.teamId)) {
+          teamMap.get(user.teamId).members.push(this.toFullUser(user));
+        } else {
+          unassigned.push(this.toFullUser(user));
+        }
+      }
+
+      return {
+        success: true,
+        message: 'Org chart fetched successfully',
+        data: {
+          scope: 'ALL',
+          summary: {
+            totalAdmins: admins.length,
+            totalManagers: managers.length,
+            totalTeams: allTeams.length,
+            totalEmployees: allUsers.filter((u) => u.role?.toUpperCase() === 'EMPLOYEE').length,
+          },
+          admins,
+          managers,
+          teams: Array.from(teamMap.values()),
+          unassignedEmployees: unassigned,
+        },
+      };
+    } catch (error: unknown) {
       const { message, stack } = this.getErrorDetails(error);
-      this.logger.error(`Error fetching users for team ${teamId}: ${message}`, stack);
+      this.logger.error(`Error building org chart: ${message}`, stack);
       throw error;
     }
   }
