@@ -15,11 +15,11 @@ export class TeamsService {
 		private readonly configService: ConfigService,
 		private readonly awsService: AwsService,
 	) {
-		this.teamsTableName = this.configService.get<string>('TABLE_TEAMS');
+		this.teamsTableName = this.configService.get<string>('TABLE_TEAMS')!;
 		if (!this.teamsTableName) {
 			throw new Error('TABLE_TEAMS environment variable is not set');
 		}
-		this.usersTableName = this.configService.get<string>('TABLE_USERS');
+		this.usersTableName = this.configService.get<string>('TABLE_USERS')!;
 		if (!this.usersTableName) {
 			throw new Error('TABLE_USERS environment variable is not set');
 		}
