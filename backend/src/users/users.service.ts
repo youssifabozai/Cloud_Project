@@ -2,7 +2,8 @@ import { BadRequestException, ForbiddenException, Injectable, InternalServerErro
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { UpdateProfileDto } from './update-profile.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { Role } from '../common/decorators/roles.decorator';
 
 type AuthenticatedUser = {
   userId: string;
@@ -10,8 +11,6 @@ type AuthenticatedUser = {
   teamId: string;
   email: string;
 };
-
-type UserRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
 
 @Injectable()
 export class UsersService {
@@ -58,10 +57,10 @@ export class UsersService {
     throw new InternalServerErrorException('An unexpected error occurred. Please try again later.');
   }
 
-  private normalizeRole(role: string): UserRole | null {
+  private normalizeRole(role: string): Role | null {
     const normalizedRole = role?.toUpperCase();
-    if (normalizedRole === 'ADMIN' || normalizedRole === 'MANAGER' || normalizedRole === 'EMPLOYEE') {
-      return normalizedRole;
+    if (normalizedRole === Role.ADMIN || normalizedRole === Role.MANAGER || normalizedRole === Role.EMPLOYEE) {
+      return normalizedRole as Role;
     }
 
     return null;
@@ -301,7 +300,7 @@ export class UsersService {
       }
 
       let users: any[] = [];
-      if (role === 'ADMIN' || role === 'MANAGER') {
+      if (role === Role.ADMIN || role === Role.MANAGER) {
         users = await this.getAllUsers();
       } else {
         users = await this.getUsersByTeam(currentUser.teamId);
@@ -367,7 +366,7 @@ export class UsersService {
   async assignUserToTeam(userId: string, teamId: string, currentUser: AuthenticatedUser) {
     try {
       const role = this.normalizeRole(currentUser.role);
-      if (role !== 'ADMIN') {
+      if (role !== Role.ADMIN) {
         throw new ForbiddenException('Only ADMIN users can assign teams');
       }
 
@@ -412,7 +411,7 @@ export class UsersService {
   async assignUserRole(userId: string, role: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Only ADMIN users can change roles');
       }
 
@@ -453,7 +452,7 @@ export class UsersService {
       if (!role) {
         throw new ForbiddenException('Access denied: unsupported user role');
       }
-      if (role !== 'ADMIN' && role !== 'MANAGER') {
+      if (role !== Role.ADMIN && role !== Role.MANAGER) {
         throw new ForbiddenException('Access denied: only ADMIN and MANAGER can view team members');
       }
       if (!teamId?.trim()) {
@@ -486,7 +485,7 @@ export class UsersService {
   async elevateToAdmin(userId: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Access denied: only ADMIN users can elevate accounts');
       }
 
@@ -502,7 +501,7 @@ export class UsersService {
 
       // Prevent duplicate elevation
       const targetRole = this.normalizeRole(targetUser.role ?? '');
-      if (targetRole === 'ADMIN') {
+      if (targetRole === Role.ADMIN) {
         throw new BadRequestException(`User ${userId} is already an ADMIN`);
       }
 
@@ -531,7 +530,7 @@ export class UsersService {
   async removeUser(userId: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Access denied: only ADMIN users can delete accounts');
       }
 
@@ -552,7 +551,7 @@ export class UsersService {
 
       // Prevent deleting other ADMIN accounts
       const targetRole = this.normalizeRole(targetUser.role ?? '');
-      if (targetRole === 'ADMIN') {
+      if (targetRole === Role.ADMIN) {
         throw new ForbiddenException('Cannot delete an ADMIN account');
       }
 
@@ -638,7 +637,7 @@ export class UsersService {
       ]);
 
       // ── EMPLOYEE: restricted single-team view ─────────────────────────────
-      if (role === 'EMPLOYEE') {
+      if (role === Role.EMPLOYEE) {
         if (!currentUser.teamId) {
           return {
             success: true,
@@ -673,11 +672,11 @@ export class UsersService {
 
       // Bucket users by role
       const admins = allUsers
-        .filter((u) => u.role?.toUpperCase() === 'ADMIN')
+        .filter((u) => u.role?.toUpperCase() === Role.ADMIN)
         .map((u) => this.toFullUser(u));
 
       const managers = allUsers
-        .filter((u) => u.role?.toUpperCase() === 'MANAGER')
+        .filter((u) => u.role?.toUpperCase() === Role.MANAGER)
         .map((u) => this.toFullUser(u));
 
       // Build a map of teamId → team metadata + members
@@ -698,7 +697,7 @@ export class UsersService {
       const unassigned: any[] = [];
       for (const user of allUsers) {
         const userRole = user.role?.toUpperCase();
-        if (userRole !== 'EMPLOYEE') continue;
+        if (userRole !== Role.EMPLOYEE) continue;
 
         if (user.teamId && teamMap.has(user.teamId)) {
           teamMap.get(user.teamId).members.push(this.toFullUser(user));
@@ -716,7 +715,7 @@ export class UsersService {
             totalAdmins: admins.length,
             totalManagers: managers.length,
             totalTeams: allTeams.length,
-            totalEmployees: allUsers.filter((u) => u.role?.toUpperCase() === 'EMPLOYEE').length,
+            totalEmployees: allUsers.filter((u) => u.role?.toUpperCase() === Role.EMPLOYEE).length,
           },
           admins,
           managers,
