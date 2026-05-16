@@ -1,22 +1,84 @@
-import { ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AuthGuard } from '@nestjs/passport';
-import { IS_PUBLIC_KEY } from './decorators/public.decorator';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import {
+  CognitoIdentityProviderClient,
+  GetUserCommand,
+} from '@aws-sdk/client-cognito-identity-provider';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
-  constructor(private reflector: Reflector) {
-    super();
-  }
+export class JwtAuthGuard implements CanActivate {
+  private readonly region = process.env.AWS_REGION || 'us-east-1';
 
-  canActivate(context: ExecutionContext) {
+  private readonly verifier = CognitoJwtVerifier.create({
+    userPoolId: process.env.COGNITO_USER_POOL_ID!,
+    tokenUse: 'access',
+    clientId: process.env.COGNITO_CLIENT_ID!,
+  });
+
+  private readonly cognitoClient = new CognitoIdentityProviderClient({
+    region: this.region,
+  });
+
+  constructor(private readonly reflector: Reflector) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
+
     if (isPublic) {
       return true;
     }
-    return super.canActivate(context);
+
+    const request = context.switchToHttp().getRequest();
+    const authHeader = request.headers.authorization as string | undefined;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException('Missing bearer token');
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+      const payload = await this.verifier.verify(token);
+
+      const userResponse = await this.cognitoClient.send(
+        new GetUserCommand({
+          AccessToken: token,
+        }),
+      );
+
+      const attributes = Object.fromEntries(
+        (userResponse.UserAttributes ?? []).map((attr) => [
+          attr.Name as string,
+          attr.Value,
+        ]),
+      );
+
+      request.user = {
+        userId: attributes.sub ?? payload.sub,
+        username: userResponse.Username,
+        email: attributes.email,
+        role: attributes['custom:role'],
+       teamId: attributes['custom:team'],
+      };
+
+      return true;
+    } catch (error: any) {
+      console.error('JWT AUTH ERROR:', {
+        name: error?.name,
+        message: error?.message,
+      });
+
+      throw new UnauthorizedException('Invalid or expired token');
+    }
   }
 }

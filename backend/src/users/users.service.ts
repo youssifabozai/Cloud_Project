@@ -151,7 +151,7 @@ export class UsersService {
     try {
       const command = new GetCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
+       Key: { userId },
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Item || null;
@@ -171,7 +171,7 @@ export class UsersService {
   async createUser(userId: string, userData: any) {
     try {
       const user = {
-        id: userId,
+            userId,
         ...userData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -211,7 +211,7 @@ export class UsersService {
 
       const command = new UpdateCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
+        Key: { userId },
         UpdateExpression: `SET ${updateExpression}, updatedAt = :updatedAt`,
         ExpressionAttributeValues: expressionAttributeValues,
         ReturnValues: 'ALL_NEW',
@@ -233,7 +233,7 @@ export class UsersService {
     try {
       const command = new DeleteCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
+       Key: { userId },
       });
       await this.awsService.dynamoDbDocClient.send(command);
     } catch (error: unknown) {
@@ -601,7 +601,7 @@ export class UsersService {
    */
   private toPublicUser(user: any) {
     return {
-      userId: user.id,
+      userId: user.userId,
       fullName: user.fullName ?? null,
       email: user.email,
       role: user.role,
@@ -615,7 +615,7 @@ export class UsersService {
    */
   private toFullUser(user: any) {
     const { passwordHash, password, ...rest } = user;
-    return { ...rest, userId: user.id };
+    return { ...rest, userId: user.userId };
   }
 
   /**
