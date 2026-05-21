@@ -33,7 +33,7 @@ export class AuthenticationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly usersService: UsersService,
-  ) {}
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -59,10 +59,11 @@ export class AuthenticationGuard implements CanActivate {
       const userId = payload.sub;
 
       // Fetch full profile from DynamoDB (Source of Truth for Roles)
-      const dbUser = await this.usersService.getUserById(userId);
+      let dbUser = await this.usersService.getUserById(userId);
+      let cognitoEmail: string | undefined;
 
       if (!dbUser) {
-        // Fallback to Cognito attributes if not in DB yet (minimal info)
+        // Fallback to Cognito attributes so we can recover legacy users stored by email.
         const userResponse = await this.cognitoClient.send(
           new GetUserCommand({
             AccessToken: token,
@@ -76,22 +77,30 @@ export class AuthenticationGuard implements CanActivate {
           ]),
         );
 
-        request.user = {
-          userId: userId,
-          username: userResponse.Username,
-          email: attributes.email,
-          role: 'EMPLOYEE', // Default for unknown DB users
-          teamId: null,
-        };
-      } else {
-        request.user = {
-          userId: dbUser.userId,
-          email: dbUser.email,
-          role: (dbUser.role || 'EMPLOYEE').toUpperCase(),
-          teamId: dbUser.teamId,
-          fullName: dbUser.fullName,
-        };
+        cognitoEmail = attributes.email;
+        if (cognitoEmail) {
+          dbUser = await this.usersService.getUserByEmail(cognitoEmail);
+        }
+
+        if (!dbUser) {
+          request.user = {
+            userId: userId,
+            username: userResponse.Username,
+            email: cognitoEmail,
+            role: 'EMPLOYEE', // Default for unknown DB users
+            teamId: null,
+          };
+          return true;
+        }
       }
+
+      request.user = {
+        userId: dbUser.userId,
+        email: dbUser.email,
+        role: String(dbUser.role || 'EMPLOYEE').trim().toUpperCase(),
+        teamId: dbUser.teamId,
+        fullName: dbUser.fullName,
+      };
 
       return true;
     } catch (error: any) {

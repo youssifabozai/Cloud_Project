@@ -3,9 +3,10 @@ import {
   CognitoIdentityProviderClient,
   AdminInitiateAuthCommand,
   GetUserCommand,
-   AdminCreateUserCommand,
+  AdminCreateUserCommand,
+  AdminGetUserCommand,
+  AdminDeleteUserCommand,
   AdminSetUserPasswordCommand,
-  AdminUpdateUserAttributesCommand,
   GlobalSignOutCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { createHmac } from 'crypto';
@@ -23,20 +24,20 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private cognitoClient: CognitoIdentityProviderClient;
 
- private readonly region = process.env.AWS_REGION || 'us-east-1';
-private readonly userPoolId = process.env.COGNITO_USER_POOL_ID!;
-private readonly clientId = process.env.COGNITO_CLIENT_ID!;
-private readonly clientSecret = process.env.COGNITO_CLIENT_SECRET!;
+  private readonly region = process.env.AWS_REGION || 'us-east-1';
+  private readonly userPoolId = process.env.COGNITO_USER_POOL_ID!;
+  private readonly clientId = process.env.COGNITO_CLIENT_ID!;
+  private readonly clientSecret = process.env.COGNITO_CLIENT_SECRET!;
 
   // هاتيها من Cognito App Client > Show client secret
   // مهم: متبعتيش السر ده لأي حد
- 
 
-constructor(private readonly usersService: UsersService) {
-  this.cognitoClient = new CognitoIdentityProviderClient({
-    region: this.region,
-  });
-}
+
+  constructor(private readonly usersService: UsersService) {
+    this.cognitoClient = new CognitoIdentityProviderClient({
+      region: this.region,
+    });
+  }
 
   private getSecretHash(username: string): string {
     return createHmac('sha256', this.clientSecret)
@@ -91,16 +92,46 @@ constructor(private readonly usersService: UsersService) {
       );
 
       const userId = attributes.sub;
-      const dbUser = await this.usersService.getUserById(userId);
+      const email = attributes.email;
+      const fullName = attributes.name ?? null;
+      let dbUser = await this.usersService.getUserById(userId);
+
+      if (!dbUser && email) {
+        dbUser = await this.usersService.getUserByEmail(email);
+      }
+
+      if (!dbUser) {
+        dbUser = await this.usersService.createUser(userId, {
+          email,
+          fullName,
+          role: (attributes['custom:role'] ?? 'EMPLOYEE').toUpperCase(),
+          teamId: attributes['custom:team'] ?? null,
+        });
+      }
+
+      if (dbUser) {
+        const profileUpdates: Record<string, string> = {};
+        if (email && dbUser.email !== email) {
+          profileUpdates.email = email;
+        }
+        if (fullName && dbUser.fullName !== fullName) {
+          profileUpdates.fullName = fullName;
+        }
+
+        if (Object.keys(profileUpdates).length > 0) {
+          await this.usersService.updateUser(userId, profileUpdates);
+          dbUser = { ...dbUser, ...profileUpdates };
+        }
+      }
 
       return {
         username: response.Username,
         sub: userId,
-        email: attributes.email,
+        email,
         emailVerified: attributes.email_verified === 'true',
         role: dbUser?.role ?? attributes['custom:role'] ?? 'EMPLOYEE',
         team: dbUser?.teamId ?? attributes['custom:team'] ?? null,
-        fullName: dbUser?.fullName ?? attributes.name ?? null,
+        fullName: dbUser?.fullName ?? fullName,
       };
     } catch (error) {
       this.logger.error('Cognito get user error:', error);
@@ -108,73 +139,91 @@ constructor(private readonly usersService: UsersService) {
     }
   }
   async createUser(data: {
-  email: string;
-  password: string;
-  fullName: string;
-  role: Role;
-  team: string;
-}) {
-  try {
-    const createResponse = await this.cognitoClient.send(
-      new AdminCreateUserCommand({
-        UserPoolId: this.userPoolId,
-        Username: data.email,
-        MessageAction: 'SUPPRESS',
-        UserAttributes: [
-          { Name: 'email', Value: data.email },
-          { Name: 'email_verified', Value: 'true' },
-          { Name: 'name', Value: data.fullName },
-        ],
-        TemporaryPassword: data.password,
-      }),
-    );
+    email: string;
+    password: string;
+    fullName: string;
+    role: Role;
+    team: string;
+  }) {
+    try {
+      await this.cognitoClient.send(
+        new AdminCreateUserCommand({
+          UserPoolId: this.userPoolId,
+          Username: data.email,
+          MessageAction: 'SUPPRESS',
+          UserAttributes: [
+            { Name: 'email', Value: data.email },
+            { Name: 'email_verified', Value: 'true' },
+            { Name: 'name', Value: data.fullName },
+          ],
+          TemporaryPassword: data.password,
+        }),
+      );
 
-    await this.cognitoClient.send(
-      new AdminSetUserPasswordCommand({
-        UserPoolId: this.userPoolId,
-        Username: data.email,
-        Password: data.password,
-        Permanent: true,
-      }),
-    );
-    const userId = createResponse.User?.Attributes?.find((attr) => attr.Name === 'sub')?.Value ?? data.email;
+      const createdUser = await this.cognitoClient.send(
+        new AdminGetUserCommand({
+          UserPoolId: this.userPoolId,
+          Username: data.email,
+        }),
+      );
 
-    const userProfile = await this.usersService.createUser(userId, {
-      email: data.email,
-      fullName: data.fullName,
-      role: data.role,
-      teamId: data.team,
-    });
+      await this.cognitoClient.send(
+        new AdminSetUserPasswordCommand({
+          UserPoolId: this.userPoolId,
+          Username: data.email,
+          Password: data.password,
+          Permanent: true,
+        }),
+      );
+      const userId = createdUser.UserAttributes?.find((attr) => attr.Name === 'sub')?.Value ?? data.email;
 
-    return {
-      userId,
-      email: data.email,
-      fullName: data.fullName,
-      role: data.role,
-      teamId: data.team,
-      dynamoDbProfile: userProfile,
-    };
-  } catch (error: any) {
-    this.logger.error(`Error creating user in Cognito: ${error.message}`, error.stack);
-    throw error;
+      let userProfile;
+      try {
+        userProfile = await this.usersService.createUser(userId, {
+          email: data.email,
+          fullName: data.fullName,
+          role: data.role,
+          teamId: data.team,
+        });
+      } catch (dbError) {
+        await this.cognitoClient.send(
+          new AdminDeleteUserCommand({
+            UserPoolId: this.userPoolId,
+            Username: data.email,
+          }),
+        ).catch(() => undefined);
+        throw dbError;
+      }
+
+      return {
+        userId,
+        email: data.email,
+        fullName: data.fullName,
+        role: data.role,
+        teamId: data.team,
+        dynamoDbProfile: userProfile,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error creating user in Cognito: ${error.message}`, error.stack);
+      throw error;
+    }
   }
-}
 
-async logout(accessToken: string) {
-  try {
-    const command = new GlobalSignOutCommand({
-      AccessToken: accessToken,
-    });
+  async logout(accessToken: string) {
+    try {
+      const command = new GlobalSignOutCommand({
+        AccessToken: accessToken,
+      });
 
-    await this.cognitoClient.send(command);
+      await this.cognitoClient.send(command);
 
-    return {
-      success: true,
-      message: 'User signed out globally from all devices',
-    };
-  } catch (error) {
+      return {
+        success: true,
+        message: 'User signed out globally from all devices',
+      };
+    } catch (error) {
       this.logger.error('Cognito logout error:', error);
-    throw new UnauthorizedException('Logout failed');
+      throw new UnauthorizedException('Logout failed');
+    }
   }
-}
 }

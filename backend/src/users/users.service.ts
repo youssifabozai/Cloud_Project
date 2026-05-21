@@ -5,6 +5,7 @@ import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, Sca
 import {
   CognitoIdentityProviderClient,
   AdminDeleteUserCommand,
+  AdminUpdateUserAttributesCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Role } from '../common/decorators/roles.decorator';
@@ -160,7 +161,7 @@ export class UsersService {
     try {
       const command = new GetCommand({
         TableName: this.usersTableName,
-       Key: { userId },
+        Key: { userId },
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Item || null;
@@ -172,6 +173,47 @@ export class UsersService {
   }
 
   /**
+   * Fallback lookup for legacy records that were saved with the email as the key
+   * instead of the Cognito `sub`.
+   */
+  async getUserByEmail(email: string) {
+    try {
+      if (!email?.trim()) {
+        return null;
+      }
+
+      const targetEmail = email.trim().toLowerCase();
+      const users = await this.getAllUsers();
+      return users.find((user) => (user.email ?? '').toString().trim().toLowerCase() === targetEmail) ?? null;
+    } catch (error: unknown) {
+      const { message, stack } = this.getErrorDetails(error);
+      this.logger.error(`Error fetching user by email ${email}: ${message}`, stack);
+      throw error;
+    }
+  }
+
+  private async syncUserToCognito(user: { email?: string; fullName?: string; role?: string; teamId?: string }) {
+    if (!user.email?.trim()) {
+      return;
+    }
+
+    const userAttributes = [
+      { Name: 'email', Value: user.email },
+      { Name: 'name', Value: user.fullName ?? '' },
+      { Name: 'custom:role', Value: (user.role ?? 'EMPLOYEE').toUpperCase() },
+      { Name: 'custom:team', Value: user.teamId ?? '' },
+    ].filter((attr) => attr.Value !== undefined);
+
+    await this.cognitoClient.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: this.userPoolId,
+        Username: user.email,
+        UserAttributes: userAttributes,
+      }),
+    );
+  }
+
+  /**
    * Create a new user in DynamoDB
    * @param userId - The unique identifier for the user
    * @param userData - The user data to store
@@ -180,7 +222,7 @@ export class UsersService {
   async createUser(userId: string, userData: any) {
     try {
       const user = {
-            userId,
+        userId,
         ...userData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -190,6 +232,7 @@ export class UsersService {
         Item: user,
       });
       await this.awsService.dynamoDbDocClient.send(command);
+      await this.syncUserToCognito(user);
       return user;
     } catch (error: unknown) {
       const { message, stack } = this.getErrorDetails(error);
@@ -229,6 +272,9 @@ export class UsersService {
         ReturnValues: 'ALL_NEW',
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
+      if (result.Attributes) {
+        await this.syncUserToCognito(result.Attributes as any);
+      }
       return result.Attributes;
     } catch (error: unknown) {
       const { message, stack } = this.getErrorDetails(error);
@@ -245,7 +291,7 @@ export class UsersService {
     try {
       const command = new DeleteCommand({
         TableName: this.usersTableName,
-       Key: { userId },
+        Key: { userId },
       });
       await this.awsService.dynamoDbDocClient.send(command);
     } catch (error: unknown) {
