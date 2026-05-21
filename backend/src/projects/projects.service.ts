@@ -101,8 +101,8 @@ export class ProjectsService {
 
 				if (role !== 'ADMIN') {
 					// Employees and Managers only see projects assigned to them
-					// or where they are the manager.
-					params.FilterExpression = 'contains(assignedUserIds, :userId) OR managerId = :userId';
+					// or where they are the manager, or where they created it (for legacy seeds).
+					params.FilterExpression = 'contains(assignedUserIds, :userId) OR managerId = :userId OR createdBy = :userId';
 					params.ExpressionAttributeValues = {
 						':userId': currentUser.userId,
 					};
@@ -153,8 +153,9 @@ export class ProjectsService {
 				const isAssignedUser = project.assignedUserIds?.includes(currentUser.userId);
 				const isAssignedTeam = currentUser.teamId && project.assignedTeamIds?.includes(currentUser.teamId);
 				const isManager = project.managerId === currentUser.userId;
+				const isCreator = project.createdBy === currentUser.userId;
 
-				if (!isAssignedUser && !isAssignedTeam && !isManager) {
+				if (!isAssignedUser && !isAssignedTeam && !isManager && !isCreator) {
 					throw new ForbiddenException('Access denied: You are not assigned to this project');
 				}
 			}

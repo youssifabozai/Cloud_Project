@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
-import { QueryCommand, UpdateCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, UpdateCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { PublishCommand } from '@aws-sdk/client-sns';
 
 @Injectable()
@@ -90,13 +90,11 @@ export class NotificationsService {
       } catch (err: any) {
         if (err.name === 'ValidationException' && err.message.includes('Index')) {
           // GSI missing, fallback to scan
-          const scanCommand = new QueryCommand({
+          const scanCommand = new ScanCommand({
             TableName: this.notificationsTableName,
-            KeyConditionExpression: 'userId = :userId',
-            FilterExpression: filterExpression,
+            FilterExpression: `userId = :userId${unreadOnly ? ' AND isRead = :isRead' : ''}`,
             ExpressionAttributeValues: expressionAttributeValues,
           });
-          // Assuming userId is the partition key if GSI is missing
           const scanResult = await this.awsService.dynamoDbDocClient.send(scanCommand);
           return { success: true, data: scanResult.Items || [] };
         }

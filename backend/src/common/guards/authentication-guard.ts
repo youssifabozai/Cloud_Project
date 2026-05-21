@@ -87,7 +87,7 @@ export class AuthenticationGuard implements CanActivate {
         request.user = {
           userId: dbUser.userId,
           email: dbUser.email,
-          role: dbUser.role || 'EMPLOYEE',
+          role: (dbUser.role || 'EMPLOYEE').toUpperCase(),
           teamId: dbUser.teamId,
           fullName: dbUser.fullName,
         };

@@ -238,6 +238,10 @@ export class TeamsService {
 	 */
 	async createTeam(dto: CreateTeamDto, currentUser: any) {
 		try {
+			const role = currentUser.role?.toUpperCase();
+			if (role !== 'ADMIN') {
+				throw new ForbiddenException('Access denied: only ADMIN can create teams');
+			}
 			const teamId = uuidv4();
 			const now = new Date().toISOString();
 
@@ -295,25 +299,7 @@ export class TeamsService {
 				throw new ConflictException(`Cannot delete team ${teamId} because it still has members`);
 			}
 
-			// 2. Guard: refuse deletion when team still has members
-			const membersResult = await this.awsService.dynamoDbDocClient.send(
-				new QueryCommand({
-					TableName: this.usersTableName,
-					IndexName: 'teamId-index',
-					KeyConditionExpression: 'teamId = :teamId',
-					ExpressionAttributeValues: { ':teamId': teamId },
-					// We only need to know if at least one member exists
-					Limit: 1,
-					Select: 'COUNT',
-				}),
-			);
 
-			const memberCount = membersResult.Count ?? 0;
-			if (memberCount > 0) {
-				throw new ConflictException(
-					`Cannot delete team "${team.name}": it still has ${memberCount} member(s). Reassign or remove all users first.`,
-				);
-			}
 
 			// 3. Delete the team
 			await this.awsService.dynamoDbDocClient.send(

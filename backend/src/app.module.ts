@@ -13,6 +13,7 @@ import { TeamsModule } from './teams/teams.module';
 import { UsersModule } from './users/users.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { AuditLogsModule } from './audit-Logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ ProjectsModule,
     UsersModule,
     NotificationsModule,
     MetricsModule,
+    AuditLogsModule,
   ],
   controllers: [AppController],
   providers: [

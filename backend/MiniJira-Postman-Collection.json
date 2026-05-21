@@ -1,0 +1,735 @@
+{
+	"info": {
+		"_postman_id": "mini-jira-aws-full-collection",
+		"name": "Mini-Jira AWS — Full API Collection",
+		"description": "Complete test collection for every implemented route in the Mini-Jira NestJS backend.\n\nGenerated 2026-05-21 from source controller scan.\n\n**Setup**: Set the `baseUrl` variable (default `http://localhost:3000`) and `bearerToken` after logging in.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "bearerToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "userId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "teamId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "projectId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "taskId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "notificationId",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{bearerToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "App",
+			"description": "Root-level health-check and AWS connectivity endpoints (public, no auth required).",
+			"item": [
+				{
+					"name": "Health Check (GET /)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/",
+							"host": ["{{baseUrl}}"],
+							"path": [""]
+						},
+						"auth": { "type": "noauth" },
+						"description": "Public. Returns a hello-world string confirming the server is alive."
+					}
+				},
+				{
+					"name": "AWS Connection Test (GET /aws-test)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/aws-test",
+							"host": ["{{baseUrl}}"],
+							"path": ["aws-test"]
+						},
+						"auth": { "type": "noauth" },
+						"description": "Public. Tests AWS DynamoDB connectivity and lists discovered tables."
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"description": "Authentication endpoints — login, create user, and logout.\n\nLogin is public; create-user requires MANAGER/ADMIN; logout requires a valid token.",
+			"item": [
+				{
+					"name": "Login (POST /auth/login)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json.accessToken) {",
+									"    pm.collectionVariables.set('bearerToken', json.accessToken);",
+									"    console.log('✅ bearerToken auto-saved');",
+									"}",
+									"if (json.user && json.user.userId) {",
+									"    pm.collectionVariables.set('userId', json.user.userId);",
+									"    console.log('✅ userId auto-saved: ' + json.user.userId);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@minijira.com\",\n  \"password\": \"YourPassword123!\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "login"]
+						},
+						"auth": { "type": "noauth" },
+						"description": "Public. Authenticates against AWS Cognito and returns access/refresh tokens.\n\n**Auto-script**: On success, automatically sets `bearerToken` and `userId` collection variables."
+					}
+				},
+				{
+					"name": "Create User (POST /auth/create-user)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"newuser@minijira.com\",\n  \"password\": \"TempPassword123!\",\n  \"fullName\": \"New User\",\n  \"role\": \"Employee\",\n  \"team\": \"{{teamId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/create-user",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "create-user"]
+						},
+						"description": "Requires MANAGER or ADMIN role. Creates a new user in Cognito and DynamoDB."
+					}
+				},
+				{
+					"name": "Logout (POST /auth/logout)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/auth/logout",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "logout"]
+						},
+						"description": "Requires Bearer token. Invalidates the current access token in Cognito."
+					}
+				}
+			]
+		},
+		{
+			"name": "Users",
+			"description": "User management — profile, org chart, team/role assignment, and admin elevation.",
+			"item": [
+				{
+					"name": "Get All Users (GET /users)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"]
+						},
+						"description": "Returns all users. ADMIN/MANAGER see full list; Employee sees limited info."
+					}
+				},
+				{
+					"name": "Get Current User Profile (GET /users/me)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me"]
+						},
+						"description": "Returns the authenticated user's own profile."
+					}
+				},
+				{
+					"name": "Get Org Chart (GET /users/org-chart)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/org-chart",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "org-chart"]
+						},
+						"description": "Returns hierarchical organisation chart with teams and members."
+					}
+				},
+				{
+					"name": "Get Users By Team (GET /users/team/:teamId)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/team/{{teamId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "team", "{{teamId}}"]
+						},
+						"description": "Requires ADMIN or MANAGER role. Returns all users belonging to the specified team."
+					}
+				},
+				{
+					"name": "Update User Profile (PUT /users/:userId/profile)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"fullName\": \"Updated Name\",\n  \"email\": \"updated@minijira.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}/profile",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}", "profile"]
+						},
+						"description": "Updates a user's profile. Users can update their own; ADMIN can update any."
+					}
+				},
+				{
+					"name": "Assign User to Team (PUT /users/:userId/team)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"teamId\": \"{{teamId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}/team",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}", "team"]
+						},
+						"description": "Requires ADMIN role. Assigns a user to a team."
+					}
+				},
+				{
+					"name": "Update User Role (PUT /users/:userId/role)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"Manager\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}/role",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}", "role"]
+						},
+						"description": "Requires ADMIN role. Changes a user's role (Employee, Manager, Admin)."
+					}
+				},
+				{
+					"name": "Delete User (DELETE /users/:userId)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"]
+						},
+						"description": "Requires ADMIN role. Permanently removes a user from DynamoDB and Cognito."
+					}
+				},
+				{
+					"name": "Elevate to Admin (POST /users/admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/admin",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "admin"]
+						},
+						"description": "Requires ADMIN role. Elevates a user to Admin role."
+					}
+				}
+			]
+		},
+		{
+			"name": "Teams",
+			"description": "Team CRUD — list, get by ID, create, delete.",
+			"item": [
+				{
+					"name": "Get All Teams (GET /teams)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/teams",
+							"host": ["{{baseUrl}}"],
+							"path": ["teams"]
+						},
+						"description": "Returns all teams. Filtered based on user's role/team membership."
+					}
+				},
+				{
+					"name": "Get Team By ID (GET /teams/:teamId)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/teams/{{teamId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["teams", "{{teamId}}"]
+						},
+						"description": "Returns details for a specific team."
+					}
+				},
+				{
+					"name": "Create Team (POST /teams)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json.teamId) {",
+									"    pm.collectionVariables.set('teamId', json.teamId);",
+									"    console.log('✅ teamId auto-saved: ' + json.teamId);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test Team\",\n  \"description\": \"A team created via Postman for testing\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/teams",
+							"host": ["{{baseUrl}}"],
+							"path": ["teams"]
+						},
+						"description": "Requires ADMIN role. Creates a new team.\n\n**Auto-script**: On success, saves `teamId` to collection variables."
+					}
+				},
+				{
+					"name": "Delete Team (DELETE /teams/:teamId)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/teams/{{teamId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["teams", "{{teamId}}"]
+						},
+						"description": "Requires ADMIN role. Deletes a team (must have no members)."
+					}
+				}
+			]
+		},
+		{
+			"name": "Tasks",
+			"description": "Task operations — list, get by ID, update status.",
+			"item": [
+				{
+					"name": "Get All Tasks (GET /tasks)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks"]
+						},
+						"description": "Returns tasks visible to the current user. ADMIN/MANAGER see all; Employee sees only assigned tasks."
+					}
+				},
+				{
+					"name": "Get All Tasks — Filtered by Team (GET /tasks?teamId=)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks?teamId={{teamId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks"],
+							"query": [
+								{ "key": "teamId", "value": "{{teamId}}" }
+							]
+						},
+						"description": "Returns tasks filtered by a specific team ID."
+					}
+				},
+				{
+					"name": "Get Task By ID (GET /tasks/:taskId)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}"]
+						},
+						"description": "Returns a single task by its ID."
+					}
+				},
+				{
+					"name": "Update Task Status (PATCH /tasks/:taskId/status)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"In Progress\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/tasks/{{taskId}}/status",
+							"host": ["{{baseUrl}}"],
+							"path": ["tasks", "{{taskId}}", "status"]
+						},
+						"description": "Updates the status of a task. Valid values: 'To Do', 'In Progress', 'Done', 'Closed'.\n\nAlso creates an activity log entry."
+					}
+				}
+			]
+		},
+		{
+			"name": "Projects",
+			"description": "Project CRUD and member assignment.",
+			"item": [
+				{
+					"name": "Get All Projects (GET /projects)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects"]
+						},
+						"description": "Returns projects visible to the current user based on role and membership."
+					}
+				},
+				{
+					"name": "Get Project By ID (GET /projects/:projectId)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						},
+						"description": "Returns a single project by ID."
+					}
+				},
+				{
+					"name": "Create Project (POST /projects)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json.projectId) {",
+									"    pm.collectionVariables.set('projectId', json.projectId);",
+									"    console.log('✅ projectId auto-saved: ' + json.projectId);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test Project\",\n  \"description\": \"A project created via Postman\",\n  \"status\": \"Active\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects"]
+						},
+						"description": "Requires ADMIN or MANAGER role. Creates a new project.\n\n**Auto-script**: On success, saves `projectId` to collection variables."
+					}
+				},
+				{
+					"name": "Update Project (PUT /projects/:projectId)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Project Name\",\n  \"description\": \"Updated description\",\n  \"status\": \"Completed\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						},
+						"description": "Requires ADMIN or MANAGER role. Updates an existing project."
+					}
+				},
+				{
+					"name": "Delete Project (DELETE /projects/:projectId)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}"]
+						},
+						"description": "Requires ADMIN or MANAGER role. Deletes a project."
+					}
+				},
+				{
+					"name": "Assign Member to Project (POST /projects/:projectId/members)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"memberId\": \"{{userId}}\",\n  \"type\": \"USER\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "members"]
+						},
+						"description": "Requires ADMIN or MANAGER role. Assigns a user or team to a project.\n\nBody `type` can be `USER` or `TEAM`."
+					}
+				},
+				{
+					"name": "Remove Member from Project (DELETE /projects/:projectId/members/:memberId)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/projects/{{projectId}}/members/{{userId}}?type=USER",
+							"host": ["{{baseUrl}}"],
+							"path": ["projects", "{{projectId}}", "members", "{{userId}}"],
+							"query": [
+								{ "key": "type", "value": "USER" }
+							]
+						},
+						"description": "Requires ADMIN or MANAGER role. Removes a user or team from a project.\n\nQuery param `type` can be `USER` or `TEAM`."
+					}
+				}
+			]
+		},
+		{
+			"name": "Notifications",
+			"description": "In-app notifications — list, mark as read, and SNS test dispatch.",
+			"item": [
+				{
+					"name": "Get Notifications (GET /notifications)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications"]
+						},
+						"description": "Returns all notifications for the authenticated user."
+					}
+				},
+				{
+					"name": "Get Unread Notifications (GET /notifications?unreadOnly=true)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications?unreadOnly=true",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications"],
+							"query": [
+								{ "key": "unreadOnly", "value": "true" }
+							]
+						},
+						"description": "Returns only unread notifications for the authenticated user."
+					}
+				},
+				{
+					"name": "Mark All Notifications as Read (PUT /notifications/read-all)",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications/read-all",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "read-all"]
+						},
+						"description": "Marks all notifications for the authenticated user as read."
+					}
+				},
+				{
+					"name": "Mark Single Notification as Read (PUT /notifications/:id/read)",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/notifications/{{notificationId}}/read",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "{{notificationId}}", "read"]
+						},
+						"description": "Marks a specific notification as read."
+					}
+				},
+				{
+					"name": "Test SNS Dispatch (POST /notifications/test-sns)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"Test notification from Postman\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/notifications/test-sns",
+							"host": ["{{baseUrl}}"],
+							"path": ["notifications", "test-sns"]
+						},
+						"description": "Utility endpoint to test SNS notification dispatching."
+					}
+				}
+			]
+		},
+		{
+			"name": "Metrics",
+			"description": "Dashboard analytics — summary, time-series, distribution, and burndown charts.\n\nAll require ADMIN or MANAGER role.",
+			"item": [
+				{
+					"name": "Dashboard Summary (GET /metrics/dashboard/summary)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/metrics/dashboard/summary",
+							"host": ["{{baseUrl}}"],
+							"path": ["metrics", "dashboard", "summary"]
+						},
+						"description": "Requires ADMIN or MANAGER. Returns high-level stats: total tasks, completed, in-progress, etc."
+					}
+				},
+				{
+					"name": "Time Series (GET /metrics/visualizations/time-series)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/metrics/visualizations/time-series",
+							"host": ["{{baseUrl}}"],
+							"path": ["metrics", "visualizations", "time-series"]
+						},
+						"description": "Requires ADMIN or MANAGER. Returns task completion data over time."
+					}
+				},
+				{
+					"name": "Distribution (GET /metrics/visualizations/distribution)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/metrics/visualizations/distribution",
+							"host": ["{{baseUrl}}"],
+							"path": ["metrics", "visualizations", "distribution"]
+						},
+						"description": "Requires ADMIN or MANAGER. Returns task distribution by status, priority, and team."
+					}
+				},
+				{
+					"name": "Burndown Chart (GET /metrics/visualizations/burndown)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/metrics/visualizations/burndown?projectId={{projectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["metrics", "visualizations", "burndown"],
+							"query": [
+								{ "key": "projectId", "value": "{{projectId}}" }
+							]
+						},
+						"description": "Requires ADMIN or MANAGER. Returns burndown chart data for a specific project."
+					}
+				}
+			]
+		}
+	]
+}

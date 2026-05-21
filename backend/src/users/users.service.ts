@@ -393,7 +393,7 @@ export class UsersService {
       // Validate team existence using the already-resolved table name
       const teamGet = new GetCommand({
         TableName: this.teamsTableName,
-        Key: { id: teamId },
+        Key: { teamId: teamId },
       });
       const teamResult = await this.awsService.dynamoDbDocClient.send(teamGet);
       if (!teamResult.Item) {
@@ -677,7 +677,7 @@ export class UsersService {
           };
         }
 
-        const ownTeam = allTeams.find((t) => t.id === currentUser.teamId) ?? null;
+        const ownTeam = allTeams.find((t) => t.teamId === currentUser.teamId) ?? null;
         const teamMembers = allUsers
           .filter((u) => u.teamId === currentUser.teamId)
           .map((u) => this.toPublicUser(u));
@@ -688,7 +688,7 @@ export class UsersService {
           data: {
             scope: 'TEAM',
             team: ownTeam
-              ? { teamId: ownTeam.id, name: ownTeam.name, description: ownTeam.description ?? null }
+              ? { teamId: ownTeam.teamId, name: ownTeam.name, description: ownTeam.description ?? null }
               : null,
             members: teamMembers,
           },
@@ -709,8 +709,8 @@ export class UsersService {
       // Build a map of teamId → team metadata + members
       const teamMap = new Map<string, any>();
       for (const team of allTeams) {
-        teamMap.set(team.id, {
-          teamId: team.id,
+        teamMap.set(team.teamId, {
+          teamId: team.teamId,
           name: team.name,
           description: team.description ?? null,
           createdAt: team.createdAt,

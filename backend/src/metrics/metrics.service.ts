@@ -42,7 +42,8 @@ export class MetricsService {
     let closedTasks = 0;
 
     for (const task of tasks) {
-      if (task.status === 'DONE' || task.status === 'CLOSED') {
+      const s = task.status?.toLowerCase();
+      if (s === 'done' || s === 'closed') {
         closedTasks++;
       } else {
         openTasks++;
@@ -102,7 +103,8 @@ export class MetricsService {
       }
       timeSeriesData[createdDate].created++;
 
-      if (task.status === 'DONE' || task.status === 'CLOSED') {
+      const s = task.status?.toLowerCase();
+      if (s === 'done' || s === 'closed') {
         const closedDate = task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : createdDate;
         if (!timeSeriesData[closedDate]) {
           timeSeriesData[closedDate] = { created: 0, closed: 0 };
@@ -153,7 +155,10 @@ export class MetricsService {
       data: {
         projectId,
         totalProjectTasks: projectTasks.length,
-        closedProjectTasks: projectTasks.filter(t => t.status === 'DONE' || t.status === 'CLOSED').length,
+        closedProjectTasks: projectTasks.filter(t => {
+          const s = t.status?.toLowerCase();
+          return s === 'done' || s === 'closed';
+        }).length,
       },
     };
   }
