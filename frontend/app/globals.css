@@ -1,26 +1,151 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-primary: var(--primary);
+  --color-brand-secondary: var(--secondary);
+  --color-brand-accent: var(--accent);
+  --color-brand-success: var(--success);
+  --color-brand-warning: var(--warning);
+  --color-brand-error: var(--error);
+  
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  --shadow-premium: 0 10px 30px -10px rgba(0, 0, 0, 0.08), 0 1px 3px 0 rgba(0, 0, 0, 0.03);
+  --shadow-premium-dark: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 1px 3px 0 rgba(255, 255, 255, 0.02);
+  --shadow-glow-blue: 0 0 15px rgba(59, 130, 246, 0.35);
+  --shadow-glow-purple: 0 0 15px rgba(147, 51, 234, 0.35);
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Premium Corporate Light Mode Palette */
+  --bg-primary: #F8FAFC;      /* Soft slate gray */
+  --bg-secondary: #FFFFFF;    /* Pure White */
+  --bg-card: #FFFFFF;         /* White Cards */
+  --border-color: #E2E8F0;    /* Light slate border */
+  
+  --text-primary: #0F172A;    /* Dark Charcoal (Slate-900) */
+  --text-secondary: #475569;  /* Muted slate (Slate-600) */
+  --text-tertiary: #94A3B8;   /* Light slate (Slate-400) */
+  
+  --primary: #2563EB;         /* Corporate Electric Blue */
+  --secondary: #7C3AED;      /* Indigo / Purple */
+  --accent: #0EA5E9;         /* Sky Blue */
+  --success: #10B981;        /* Emerald */
+  --warning: #F59E0B;        /* Amber */
+  --error: #EF4444;          /* Crimson Red */
+  
+  --foreground-rgb: 15, 23, 42;
+  --background-rgb: 248, 250, 252;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* Enable Dark Mode manually via .dark class or auto-detected */
+.dark {
+  /* Premium Corporate Dark Mode Palette */
+  --bg-primary: #090D16;      /* Deep Midnight Blue/Slate */
+  --bg-secondary: #0F1626;    /* Darker Slate Card Container */
+  --bg-card: #141C2F;         /* Rich Slate Card */
+  --border-color: #1E293B;    /* Deep slate border */
+  
+  --text-primary: #F8FAFC;    /* Bright Off-white */
+  --text-secondary: #94A3B8;  /* Muted Slate-400 */
+  --text-tertiary: #64748B;   /* Slate-500 placeholder */
+  
+  --primary: #3B82F6;         /* Electric Blue Glow */
+  --secondary: #8B5CF6;      /* Violet Glow */
+  --accent: #38BDF8;         /* Sky blue glow */
+  
+  --foreground-rgb: 248, 250, 252;
+  --background-rgb: 9, 13, 22;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Glassmorphism Styles */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.dark .glass-panel {
+  background: rgba(20, 28, 47, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Interactive Component Micro-Animations */
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.12);
+}
+
+.dark .hover-lift:hover {
+  box-shadow: 0 15px 30px -12px rgba(0, 0, 0, 0.5), 0 0 1px 1px rgba(255, 255, 255, 0.03);
+}
+
+.glow-border {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glow-border:focus-within, .glow-border:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  outline: none;
+}
+
+.dark .glow-border:focus-within, .dark .glow-border:focus {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+/* Kanban column skeleton pulse */
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-skeleton {
+  animation: skeleton-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Gradient text utility */
+.text-gradient {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }

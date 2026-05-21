@@ -7,9 +7,33 @@ import { AwsService } from './AWS/aws.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
-  
-  // Enable CORS for frontend requests
-  app.enableCors();
+
+  // Allow requests from any origin while keeping cookie auth working
+  app.enableCors({
+    origin: true,
+    credentials: true,
+  });
+
+  // Lightweight cookie parser to avoid an extra dependency in the dev environment
+  app.use((req: any, _res: any, next: any) => {
+    req.cookies = {};
+    const header = req.headers?.cookie;
+    if (header) {
+      header.split(';').forEach((pair: string) => {
+        const idx = pair.indexOf('=');
+        if (idx > -1) {
+          const key = pair.slice(0, idx).trim();
+          const val = pair.slice(idx + 1).trim();
+          try {
+            req.cookies[key] = decodeURIComponent(val);
+          } catch {
+            req.cookies[key] = val;
+          }
+        }
+      });
+    }
+    next();
+  });
 
   // Enable global validation using class-validator
   app.useGlobalPipes(
@@ -31,9 +55,9 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   // Start the server
-  const port = process.env.PORT ?? 3000;
+  const port = process.env.PORT ?? 4000;
   await app.listen(port);
-  
+
   logger.log(`Application is running on: http://localhost:${port}`);
   logger.log(`Swagger documentation available at: http://localhost:${port}/api/docs`);
 

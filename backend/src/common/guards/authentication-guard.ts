@@ -47,15 +47,19 @@ export class AuthenticationGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization as string | undefined;
+    const cookieToken = request.cookies ? request.cookies.accessToken : undefined;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing bearer token');
+    let token: string | undefined = undefined;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (cookieToken) {
+      token = cookieToken;
+    } else {
+      throw new UnauthorizedException('Missing bearer token or accessToken cookie');
     }
 
-    const token = authHeader.split(' ')[1];
-
     try {
-      const payload = await this.verifier.verify(token);
+      const payload = await this.verifier.verify(token!);
       const userId = payload.sub;
 
       // Fetch full profile from DynamoDB (Source of Truth for Roles)

@@ -11,6 +11,14 @@ export class ProjectsService {
 	private readonly logger = new Logger(ProjectsService.name);
 	private readonly projectsTableName: string;
 
+	private normalizeProject(project: any) {
+		const createdById = project.createdById || project.createdBy || project.managerId || null;
+		return {
+			...project,
+			createdById,
+		};
+	}
+
 	constructor(
 		private readonly configService: ConfigService,
 		private readonly awsService: AwsService,
@@ -57,6 +65,7 @@ export class ProjectsService {
 		try {
 			const projectId = uuidv4();
 			const now = new Date().toISOString();
+			const createdById = currentUser.userId;
 
 			const project = {
 				projectId: projectId,
@@ -64,7 +73,9 @@ export class ProjectsService {
 				description: dto.description || '',
 				status: dto.status || ProjectStatus.ACTIVE,
 				deadline: dto.deadline || null,
-				managerId: currentUser.userId, // Creator is the manager
+				managerId: createdById,
+				createdById,
+				createdBy: createdById,
 				assignedUserIds: dto.assignedUserIds || [],
 				assignedTeamIds: dto.assignedTeamIds || [],
 				createdAt: now,
@@ -80,7 +91,7 @@ export class ProjectsService {
 			return {
 				success: true,
 				message: 'Project created successfully',
-				data: project,
+				data: this.normalizeProject(project),
 			};
 		} catch (error) {
 			this.handleDynamoError(error, `createProject`);
@@ -127,7 +138,7 @@ export class ProjectsService {
 				message: 'Projects fetched successfully',
 				data: {
 					total: projects.length,
-					projects,
+					projects: projects.map((project) => this.normalizeProject(project)),
 				},
 			};
 		} catch (error) {
@@ -153,7 +164,9 @@ export class ProjectsService {
 				const isAssignedUser = project.assignedUserIds?.includes(currentUser.userId);
 				const isAssignedTeam = currentUser.teamId && project.assignedTeamIds?.includes(currentUser.teamId);
 				const isManager = project.managerId === currentUser.userId;
-				const isCreator = project.createdBy === currentUser.userId;
+				const isCreator =
+					project.createdById === currentUser.userId ||
+					project.createdBy === currentUser.userId;
 
 				if (!isAssignedUser && !isAssignedTeam && !isManager && !isCreator) {
 					throw new ForbiddenException('Access denied: You are not assigned to this project');
@@ -162,7 +175,7 @@ export class ProjectsService {
 
 			return {
 				success: true,
-				data: project,
+				data: this.normalizeProject(project),
 			};
 		} catch (error) {
 			this.handleDynamoError(error, `getProjectById(${projectId})`);
@@ -207,7 +220,11 @@ export class ProjectsService {
 			}
 
 			if (updateExpressionParts.length === 0) {
-				return { success: true, message: 'No fields to update', data: project };
+				return {
+					success: true,
+					message: 'No fields to update',
+					data: this.normalizeProject(project),
+				};
 			}
 
 			updateExpressionParts.push('updatedAt = :ua');
@@ -227,7 +244,7 @@ export class ProjectsService {
 			return {
 				success: true,
 				message: 'Project updated successfully',
-				data: result.Attributes,
+				data: this.normalizeProject(result.Attributes),
 			};
 		} catch (error) {
 			this.handleDynamoError(error, `updateProject(${projectId})`);
@@ -285,7 +302,7 @@ export class ProjectsService {
 			return {
 				success: true,
 				message: `${body.type} assigned successfully`,
-				data: result.Attributes,
+				data: this.normalizeProject(result.Attributes),
 			};
 		} catch (error) {
 			this.handleDynamoError(error, `assignMember(${projectId})`);
@@ -323,7 +340,7 @@ export class ProjectsService {
 			return {
 				success: true,
 				message: `${type} removed successfully`,
-				data: result.Attributes,
+				data: this.normalizeProject(result.Attributes),
 			};
 		} catch (error) {
 			this.handleDynamoError(error, `removeMember(${projectId})`);
