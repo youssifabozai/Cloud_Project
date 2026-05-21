@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import {
   CognitoIdentityProviderClient,
   AdminInitiateAuthCommand,
@@ -6,9 +6,11 @@ import {
    AdminCreateUserCommand,
   AdminSetUserPasswordCommand,
   AdminUpdateUserAttributesCommand,
+  GlobalSignOutCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { createHmac } from 'crypto';
 import { UsersService } from '../users/users.service';
+import { Role } from '../common/decorators/roles.decorator';
 
 type AuthTokens = {
   accessToken: string;
@@ -18,6 +20,7 @@ type AuthTokens = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private cognitoClient: CognitoIdentityProviderClient;
 
  private readonly region = process.env.AWS_REGION || 'us-east-1';
@@ -67,7 +70,7 @@ constructor(private readonly usersService: UsersService) {
         refreshToken: result.RefreshToken,
       };
     } catch (error) {
-      console.error('Cognito login error:', error);
+      this.logger.error('Cognito login error:', error);
       throw new UnauthorizedException('Invalid credentials');
     }
   }
@@ -87,16 +90,20 @@ constructor(private readonly usersService: UsersService) {
         ]),
       );
 
+      const userId = attributes.sub;
+      const dbUser = await this.usersService.getUserById(userId);
+
       return {
         username: response.Username,
-        sub: attributes.sub,
+        sub: userId,
         email: attributes.email,
         emailVerified: attributes.email_verified === 'true',
-        role: attributes['custom:role'] ?? null,
-        team: attributes['custom:team'] ?? null,
+        role: dbUser?.role ?? attributes['custom:role'] ?? 'EMPLOYEE',
+        team: dbUser?.teamId ?? attributes['custom:team'] ?? null,
+        fullName: dbUser?.fullName ?? attributes.name ?? null,
       };
     } catch (error) {
-      console.error('Cognito get user error:', error);
+      this.logger.error('Cognito get user error:', error);
       throw new UnauthorizedException('Invalid token');
     }
   }
@@ -104,7 +111,7 @@ constructor(private readonly usersService: UsersService) {
   email: string;
   password: string;
   fullName: string;
-  role: 'Manager' | 'Employee' | 'Admin';
+  role: Role;
   team: string;
 }) {
   try {
@@ -116,10 +123,9 @@ constructor(private readonly usersService: UsersService) {
         UserAttributes: [
           { Name: 'email', Value: data.email },
           { Name: 'email_verified', Value: 'true' },
-          { Name: 'custom:role', Value: data.role },
-          { Name: 'custom:team', Value: data.team },
           { Name: 'name', Value: data.fullName },
         ],
+        TemporaryPassword: data.password,
       }),
     );
 
@@ -131,46 +137,44 @@ constructor(private readonly usersService: UsersService) {
         Permanent: true,
       }),
     );
+    const userId = createResponse.User?.Attributes?.find((attr) => attr.Name === 'sub')?.Value ?? data.email;
 
-    await this.cognitoClient.send(
-      new AdminUpdateUserAttributesCommand({
-        UserPoolId: this.userPoolId,
-        Username: data.email,
-        UserAttributes: [
-          { Name: 'email_verified', Value: 'true' },
-          { Name: 'custom:role', Value: data.role },
-          { Name: 'custom:team', Value: data.team },
-          { Name: 'name', Value: data.fullName },
-        ],
-      }),
-    );
-
-    const userId =
-  createResponse.User?.Attributes?.find((attr) => attr.Name === 'sub')
-    ?.Value ?? data.email;
-
-const userProfile = await this.usersService.createUser(userId, {
-  email: data.email,
-  fullName: data.fullName,
-  role: data.role,
-  teamId: data.team,
-});
-
-return {
-  userId,
-  email: data.email,
-  fullName: data.fullName,
-  role: data.role,
-  teamId: data.team,
-  dynamoDbProfile: userProfile,
-};
-  } catch (error: any) {
-    console.error('COGNITO CREATE USER ERROR:', {
-      name: error?.name,
-      message: error?.message,
+    const userProfile = await this.usersService.createUser(userId, {
+      email: data.email,
+      fullName: data.fullName,
+      role: data.role,
+      teamId: data.team,
     });
 
+    return {
+      userId,
+      email: data.email,
+      fullName: data.fullName,
+      role: data.role,
+      teamId: data.team,
+      dynamoDbProfile: userProfile,
+    };
+  } catch (error: any) {
+    this.logger.error(`Error creating user in Cognito: ${error.message}`, error.stack);
     throw error;
+  }
+}
+
+async logout(accessToken: string) {
+  try {
+    const command = new GlobalSignOutCommand({
+      AccessToken: accessToken,
+    });
+
+    await this.cognitoClient.send(command);
+
+    return {
+      success: true,
+      message: 'User signed out globally from all devices',
+    };
+  } catch (error) {
+      this.logger.error('Cognito logout error:', error);
+    throw new UnauthorizedException('Logout failed');
   }
 }
 }

@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -11,9 +12,10 @@ import {
   GetUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { UsersService } from '../../users/users.service';
 
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
+export class AuthenticationGuard implements CanActivate {
   private readonly region = process.env.AWS_REGION || 'us-east-1';
 
   private readonly verifier = CognitoJwtVerifier.create({
@@ -26,7 +28,12 @@ export class JwtAuthGuard implements CanActivate {
     region: this.region,
   });
 
-  constructor(private readonly reflector: Reflector) {}
+  private readonly logger = new Logger(AuthenticationGuard.name);
+
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly usersService: UsersService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -49,35 +56,46 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = await this.verifier.verify(token);
+      const userId = payload.sub;
 
-      const userResponse = await this.cognitoClient.send(
-        new GetUserCommand({
-          AccessToken: token,
-        }),
-      );
+      // Fetch full profile from DynamoDB (Source of Truth for Roles)
+      const dbUser = await this.usersService.getUserById(userId);
 
-      const attributes = Object.fromEntries(
-        (userResponse.UserAttributes ?? []).map((attr) => [
-          attr.Name as string,
-          attr.Value,
-        ]),
-      );
+      if (!dbUser) {
+        // Fallback to Cognito attributes if not in DB yet (minimal info)
+        const userResponse = await this.cognitoClient.send(
+          new GetUserCommand({
+            AccessToken: token,
+          }),
+        );
 
-      request.user = {
-        userId: attributes.sub ?? payload.sub,
-        username: userResponse.Username,
-        email: attributes.email,
-        role: attributes['custom:role'],
-       teamId: attributes['custom:team'],
-      };
+        const attributes = Object.fromEntries(
+          (userResponse.UserAttributes ?? []).map((attr) => [
+            attr.Name as string,
+            attr.Value,
+          ]),
+        );
+
+        request.user = {
+          userId: userId,
+          username: userResponse.Username,
+          email: attributes.email,
+          role: 'EMPLOYEE', // Default for unknown DB users
+          teamId: null,
+        };
+      } else {
+        request.user = {
+          userId: dbUser.userId,
+          email: dbUser.email,
+          role: dbUser.role || 'EMPLOYEE',
+          teamId: dbUser.teamId,
+          fullName: dbUser.fullName,
+        };
+      }
 
       return true;
     } catch (error: any) {
-      console.error('JWT AUTH ERROR:', {
-        name: error?.name,
-        message: error?.message,
-      });
-
+      this.logger.error('JWT AUTH ERROR:', error?.message);
       throw new UnauthorizedException('Invalid or expired token');
     }
   }

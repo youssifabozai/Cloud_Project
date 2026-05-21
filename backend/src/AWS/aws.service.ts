@@ -5,6 +5,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { SNSClient } from '@aws-sdk/client-sns';
 import { SQSClient } from '@aws-sdk/client-sqs';
+import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { ListTablesCommand } from '@aws-sdk/client-dynamodb';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class AwsService {
   public readonly s3Client: S3Client;
   public readonly snsClient: SNSClient;
   public readonly sqsClient: SQSClient;
+  public readonly cloudWatchClient: CloudWatchClient;
 
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('AWS_REGION') || 'us-east-1';
@@ -28,6 +30,7 @@ export class AwsService {
     this.s3Client = new S3Client({ region });
     this.snsClient = new SNSClient({ region });
     this.sqsClient = new SQSClient({ region });
+    this.cloudWatchClient = new CloudWatchClient({ region });
   }
 
   async testConnection() {

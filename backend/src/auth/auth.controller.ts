@@ -4,11 +4,13 @@ import {
   Controller,
   ForbiddenException,
   Post,
-  Req,
+  Headers,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { Public } from '../common/decorators/public.decorator';
 import { UsersService } from '../users/users.service';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Role } from '../common/decorators/roles.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -32,17 +34,17 @@ export class AuthController {
 
   @Post('create-user')
   async createUser(
-    @Req() req: any,
+    @CurrentUser() user: any,
     @Body()
     body: {
       email: string;
       password: string;
       fullName: string;
-      role: 'Manager' | 'Employee' | 'Admin';
+      role: Role;
       team: string;
     },
   ) {
-    const currentRole = req.user?.role?.toUpperCase();
+    const currentRole = user?.role?.toUpperCase();
 
     if (currentRole !== 'MANAGER' && currentRole !== 'ADMIN') {
       throw new ForbiddenException('Only Manager/Admin can create users');
@@ -61,5 +63,15 @@ export class AuthController {
       message: 'User created in Cognito successfully',
       data: createdUser,
     };
+  }
+
+  @Post('logout')
+  async logout(@CurrentUser() user: any, @Headers('authorization') authHeader: string) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new BadRequestException('Bearer token is required for logout');
+    }
+
+    const token = authHeader.split(' ')[1];
+    return this.authService.logout(token);
   }
 }

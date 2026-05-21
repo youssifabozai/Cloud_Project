@@ -1,9 +1,11 @@
-import { Controller, Get, Post, Delete, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './create-team.dto';
-import { CurrentUser } from '../common/guards/decorators/current-user.decorator';
-import { Roles } from '../common/guards/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Role, Roles } from '../common/decorators/roles.decorator';
+import { AuthenticationGuard } from '../common/guards/authentication-guard';
+import { AuthorizationGuard } from '../common/guards/authorization-guard';
 
 type AuthenticatedUser = {
   userId: string;
@@ -14,6 +16,7 @@ type AuthenticatedUser = {
 
 @ApiTags('Teams')
 @Controller('teams')
+@UseGuards(AuthenticationGuard, AuthorizationGuard)
 export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}
 
@@ -31,7 +34,7 @@ export class TeamsController {
   }
 
   @Delete(':teamId')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async deleteTeam(
     @Param('teamId') teamId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -40,7 +43,7 @@ export class TeamsController {
   }
 
   @Post()
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async createTeam(
     @Body() body: CreateTeamDto,
     @CurrentUser() user: AuthenticatedUser,
