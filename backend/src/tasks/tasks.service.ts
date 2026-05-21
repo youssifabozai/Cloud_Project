@@ -1,7 +1,9 @@
 import {
+    BadRequestException,
     ForbiddenException,
     Injectable,
     NotFoundException,
+    UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -14,12 +16,17 @@ import {
 import { AwsService } from '../AWS/aws.service';
 import { v4 as uuidv4 } from 'uuid';
 
-
 type CurrentUser = {
     userId: string;
     role: string;
-    teamId: string;
+    teamId?: string | null;
 };
+
+type NormalizedCurrentUser = CurrentUser & {
+    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
+};
+
+const ALLOWED_STATUSES = ['To Do', 'In Progress', 'In Review', 'Done'];
 
 @Injectable()
 export class TasksService {
@@ -37,15 +44,35 @@ export class TasksService {
             'mini-jira-ActivityLog';
     }
 
-    private isManagerOrAdmin(user: CurrentUser): boolean {
-        const r = user.role?.toUpperCase();
-        return r === 'MANAGER' || r === 'ADMIN';
+    private normalizeUser(user: CurrentUser | null | undefined): NormalizedCurrentUser {
+        if (!user?.userId) {
+            throw new UnauthorizedException('Authenticated user is required.');
+        }
+
+        const role = String(user.role || '').trim().toUpperCase();
+
+        if (role !== 'ADMIN' && role !== 'MANAGER' && role !== 'EMPLOYEE') {
+            throw new ForbiddenException('Access denied: unsupported user role.');
+        }
+
+        return {
+            ...user,
+            role,
+        };
+    }
+
+    private isManagerOrAdmin(user: NormalizedCurrentUser): boolean {
+        return user.role === 'MANAGER' || user.role === 'ADMIN';
+    }
+
+    private getAssignedUserId(task: Record<string, any>): string | undefined {
+        return task.assigneeId ?? task.assignedUserId ?? task.assignedToUserId ?? task.assignedTo;
     }
 
     async findAllForUser(user: CurrentUser, requestedTeamId?: string) {
-        // Manager or Admin can see all tasks.
-        // If they choose a team filter, we query by teamId-index.
-        if (this.isManagerOrAdmin(user)) {
+        const currentUser = this.normalizeUser(user);
+
+        if (this.isManagerOrAdmin(currentUser)) {
             if (requestedTeamId) {
                 return this.findByTeamId(requestedTeamId);
             }
@@ -59,21 +86,20 @@ export class TasksService {
             return result.Items || [];
         }
 
-        // Employee must have a teamId.
-        if (!user.teamId) {
+        if (!currentUser.teamId) {
             throw new ForbiddenException('Employee does not have a teamId.');
         }
 
-        // Employee cannot request another team's tasks.
-        if (requestedTeamId && requestedTeamId !== user.teamId) {
-            throw new ForbiddenException('You cannot view another team’s tasks.');
+        if (requestedTeamId && requestedTeamId !== currentUser.teamId) {
+            throw new ForbiddenException("You cannot view another team's tasks.");
         }
 
-        // Employee only gets tasks from their own team.
-        return this.findByTeamId(user.teamId);
+        return this.findByTeamId(currentUser.teamId);
     }
 
     async findOneForUser(taskId: string, user: CurrentUser) {
+        const currentUser = this.normalizeUser(user);
+
         const result = await this.awsService.dynamoDbDocClient.send(
             new GetCommand({
                 TableName: this.tasksTableName,
@@ -89,14 +115,12 @@ export class TasksService {
             throw new NotFoundException('Task not found.');
         }
 
-        // Manager or Admin can open any task.
-        if (this.isManagerOrAdmin(user)) {
+        if (this.isManagerOrAdmin(currentUser)) {
             return task;
         }
 
-        // Employee cannot open a task from another team, even if they guess the ID.
-        if (task.teamId !== user.teamId) {
-            throw new ForbiddenException('You cannot view another team’s task.');
+        if (task.teamId !== currentUser.teamId) {
+            throw new ForbiddenException("You cannot view another team's task.");
         }
 
         return task;
@@ -118,39 +142,23 @@ export class TasksService {
     }
 
     async updateStatusForUser(taskId: string, newStatus: string, user: CurrentUser) {
-        const allowedStatuses = ['To Do', 'In Progress', 'In Review', 'Done'];
+        const currentUser = this.normalizeUser(user);
 
-        if (!allowedStatuses.includes(newStatus)) {
-            throw new ForbiddenException('Invalid task status.');
+        if (!ALLOWED_STATUSES.includes(newStatus)) {
+            throw new BadRequestException(
+                `Invalid task status. Must be one of: ${ALLOWED_STATUSES.join(', ')}.`,
+            );
         }
 
-        const task = await this.findOneForUser(taskId, user);
+        const task = await this.findOneForUser(taskId, currentUser);
 
-        // Employees can update status only for tasks assigned to them.
-        // Managers and Admins can update any task.
-        if (!this.isManagerOrAdmin(user) && task.assigneeId !== user.userId) {
+        if (!this.isManagerOrAdmin(currentUser) && this.getAssignedUserId(task) !== currentUser.userId) {
             throw new ForbiddenException('You can update only tasks assigned to you.');
         }
 
         const oldStatus = task.status;
-
         const now = new Date().toISOString();
-
-        const updateExpressionParts = ['#status = :newStatus', 'updatedAt = :updatedAt'];
-
-        const expressionAttributeNames = {
-            '#status': 'status',
-        };
-
-        const expressionAttributeValues: any = {
-            ':newStatus': newStatus,
-            ':updatedAt': now,
-        };
-
-        if (newStatus === 'Done') {
-            updateExpressionParts.push('closedAt = :closedAt');
-            expressionAttributeValues[':closedAt'] = now;
-        }
+        const closedAt = newStatus === 'Done' ? now : null;
 
         await this.awsService.dynamoDbDocClient.send(
             new UpdateCommand({
@@ -158,9 +166,15 @@ export class TasksService {
                 Key: {
                     taskId,
                 },
-                UpdateExpression: `SET ${updateExpressionParts.join(', ')}`,
-                ExpressionAttributeNames: expressionAttributeNames,
-                ExpressionAttributeValues: expressionAttributeValues,
+                UpdateExpression: 'SET #status = :newStatus, updatedAt = :updatedAt, closedAt = :closedAt',
+                ExpressionAttributeNames: {
+                    '#status': 'status',
+                },
+                ExpressionAttributeValues: {
+                    ':newStatus': newStatus,
+                    ':updatedAt': now,
+                    ':closedAt': closedAt,
+                },
             }),
         );
 
@@ -171,12 +185,12 @@ export class TasksService {
                     logId: uuidv4(),
                     taskId: task.taskId,
                     teamId: task.teamId,
-                    actorUserId: user.userId,
-                    actorName: user.userId,
+                    actorUserId: currentUser.userId,
+                    actorName: currentUser.userId,
                     actionType: 'STATUS_CHANGED',
                     fromStatus: oldStatus,
                     toStatus: newStatus,
-                    message: `${user.userId} moved ${task.title} from ${oldStatus} to ${newStatus}`,
+                    message: `${currentUser.userId} moved ${task.title} from ${oldStatus} to ${newStatus}`,
                     createdAt: now,
                 },
             }),
@@ -188,7 +202,7 @@ export class TasksService {
             fromStatus: oldStatus,
             toStatus: newStatus,
             updatedAt: now,
+            closedAt,
         };
     }
-
 }
