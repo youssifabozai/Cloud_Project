@@ -92,6 +92,17 @@ export class UsersService {
     return users;
   }
 
+  private isMissingTeamIndexError(error: unknown): boolean {
+    const errorName = (error as { name?: string })?.name ?? '';
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+
+    return (
+      errorName === 'ValidationException' &&
+      (message.includes('specified index') || message.includes('teamid-index') || message.includes('index'))
+    );
+  }
+
   async getUsersByTeamId(teamId: string) {
     try {
       const command = new QueryCommand({
@@ -106,10 +117,13 @@ export class UsersService {
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Items || [];
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '';
-      if (!message.includes('Index') && !message.includes('ValidationException')) {
+      if (!this.isMissingTeamIndexError(error)) {
         throw error;
       }
+
+      this.logger.warn(
+        'teamId-index is missing in DynamoDB; falling back to Scan for team-based user lookup',
+      );
 
       const users: any[] = [];
       let lastEvaluatedKey: Record<string, unknown> | undefined;
