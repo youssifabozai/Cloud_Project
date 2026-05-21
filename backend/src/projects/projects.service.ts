@@ -59,7 +59,7 @@ export class ProjectsService {
 			const now = new Date().toISOString();
 
 			const project = {
-				id: projectId,
+				projectId: projectId,
 				name: dto.name,
 				description: dto.description || '',
 				status: dto.status || ProjectStatus.ACTIVE,
@@ -139,7 +139,7 @@ export class ProjectsService {
 		try {
 			const command = new GetCommand({
 				TableName: this.projectsTableName,
-				Key: { id: projectId },
+				Key: { projectId: projectId },
 			});
 			const result = await this.awsService.dynamoDbDocClient.send(command);
 			const project = result.Item;
@@ -214,7 +214,7 @@ export class ProjectsService {
 
 			const command = new UpdateCommand({
 				TableName: this.projectsTableName,
-				Key: { id: projectId },
+				Key: { projectId: projectId },
 				UpdateExpression: `SET ${updateExpressionParts.join(', ')}`,
 				ExpressionAttributeNames: Object.keys(expressionAttributeNames).length > 0 ? expressionAttributeNames : undefined,
 				ExpressionAttributeValues: expressionAttributeValues,
@@ -240,7 +240,7 @@ export class ProjectsService {
 
 			const command = new DeleteCommand({
 				TableName: this.projectsTableName,
-				Key: { id: projectId },
+				Key: { projectId: projectId },
 			});
 			await this.awsService.dynamoDbDocClient.send(command);
 
@@ -270,7 +270,7 @@ export class ProjectsService {
 
 			const command = new UpdateCommand({
 				TableName: this.projectsTableName,
-				Key: { id: projectId },
+				Key: { projectId: projectId },
 				UpdateExpression: `SET ${updateKey} = :list, updatedAt = :ua`,
 				ExpressionAttributeValues: {
 					':list': currentList,
@@ -308,7 +308,7 @@ export class ProjectsService {
 
 			const command = new UpdateCommand({
 				TableName: this.projectsTableName,
-				Key: { id: projectId },
+				Key: { projectId: projectId },
 				UpdateExpression: `SET ${updateKey} = :list, updatedAt = :ua`,
 				ExpressionAttributeValues: {
 					':list': currentList,

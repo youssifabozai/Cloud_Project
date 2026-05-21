@@ -2,6 +2,10 @@ import { BadRequestException, ForbiddenException, Injectable, InternalServerErro
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  CognitoIdentityProviderClient,
+  AdminDeleteUserCommand,
+} from '@aws-sdk/client-cognito-identity-provider';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Role } from '../common/decorators/roles.decorator';
 
@@ -17,6 +21,8 @@ export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   private readonly usersTableName: string;
   private readonly teamsTableName: string;
+  private readonly cognitoClient: CognitoIdentityProviderClient;
+  private readonly userPoolId: string;
 
   private getErrorDetails(error: unknown): { message: string; stack?: string } {
     if (error instanceof Error) {
@@ -85,7 +91,7 @@ export class UsersService {
     return users;
   }
 
-  private async getUsersByTeam(teamId: string) {
+  async getUsersByTeamId(teamId: string) {
     try {
       const command = new QueryCommand({
         TableName: this.usersTableName,
@@ -139,6 +145,10 @@ export class UsersService {
     if (!this.teamsTableName) {
       throw new Error('TABLE_TEAMS environment variable is not set');
     }
+    this.userPoolId = this.configService.get<string>('COGNITO_USER_POOL_ID')!;
+    this.cognitoClient = new CognitoIdentityProviderClient({
+      region: this.configService.get<string>('AWS_REGION') || 'us-east-1',
+    });
   }
 
   /**
@@ -150,7 +160,7 @@ export class UsersService {
     try {
       const command = new GetCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
+       Key: { userId },
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Item || null;
@@ -170,7 +180,7 @@ export class UsersService {
   async createUser(userId: string, userData: any) {
     try {
       const user = {
-        id: userId,
+            userId,
         ...userData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -197,21 +207,24 @@ export class UsersService {
   async updateUser(userId: string, updateData: any) {
     try {
       const timestamp = new Date().toISOString();
-      const updateExpression = Object.keys(updateData)
-        .map((key) => `${key} = :${key}`)
-        .join(', ');
-      const expressionAttributeValues = Object.keys(updateData).reduce(
-        (acc, key) => {
-          acc[`:${key}`] = updateData[key];
-          return acc;
-        },
-        { ':updatedAt': timestamp },
-      );
+      const expressionAttributeNames: Record<string, string> = {};
+      const expressionAttributeValues: Record<string, any> = {
+        ':updatedAt': timestamp,
+      };
+
+      const updateExpressionParts = Object.keys(updateData).map((key) => {
+        const attributeName = `#${key}`;
+        const attributeValue = `:${key}`;
+        expressionAttributeNames[attributeName] = key;
+        expressionAttributeValues[attributeValue] = updateData[key];
+        return `${attributeName} = ${attributeValue}`;
+      });
 
       const command = new UpdateCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
-        UpdateExpression: `SET ${updateExpression}, updatedAt = :updatedAt`,
+        Key: { userId },
+        UpdateExpression: `SET ${updateExpressionParts.join(', ')}, updatedAt = :updatedAt`,
+        ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: expressionAttributeValues,
         ReturnValues: 'ALL_NEW',
       });
@@ -232,7 +245,7 @@ export class UsersService {
     try {
       const command = new DeleteCommand({
         TableName: this.usersTableName,
-        Key: { id: userId },
+       Key: { userId },
       });
       await this.awsService.dynamoDbDocClient.send(command);
     } catch (error: unknown) {
@@ -303,7 +316,7 @@ export class UsersService {
       if (role === Role.ADMIN || role === Role.MANAGER) {
         users = await this.getAllUsers();
       } else {
-        users = await this.getUsersByTeam(currentUser.teamId);
+        users = await this.getUsersByTeamId(currentUser.teamId);
       }
 
       return {
@@ -459,7 +472,7 @@ export class UsersService {
         throw new BadRequestException('teamId parameter is required');
       }
 
-      const users = await this.getUsersByTeam(teamId);
+      const users = await this.getUsersByTeamId(teamId);
 
       return {
         success: true,
@@ -557,6 +570,20 @@ export class UsersService {
 
       await this.deleteUser(userId);
 
+      // Delete from Cognito
+      if (targetUser.email) {
+        try {
+          await this.cognitoClient.send(
+            new AdminDeleteUserCommand({
+              UserPoolId: this.userPoolId,
+              Username: targetUser.email,
+            }),
+          );
+        } catch (e) {
+          this.logger.error(`Failed to delete user ${targetUser.email} from Cognito`, e);
+        }
+      }
+
       this.logger.log(`User ${userId} deleted by admin ${currentUser.userId}`);
 
       return {
@@ -600,7 +627,7 @@ export class UsersService {
    */
   private toPublicUser(user: any) {
     return {
-      userId: user.id,
+      userId: user.userId,
       fullName: user.fullName ?? null,
       email: user.email,
       role: user.role,
@@ -614,7 +641,7 @@ export class UsersService {
    */
   private toFullUser(user: any) {
     const { passwordHash, password, ...rest } = user;
-    return { ...rest, userId: user.id };
+    return { ...rest, userId: user.userId };
   }
 
   /**
