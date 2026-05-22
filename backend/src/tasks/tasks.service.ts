@@ -34,6 +34,7 @@ import {
   toResizedKey,
   ORIGINALS_PREFIX,
 } from './tasks-image.util';
+import { SnsService } from '../AWS/sns.service';
 
 type CurrentUser = {
   userId: string;
@@ -55,6 +56,7 @@ export class TasksService {
     private readonly awsService: AwsService,
     private readonly configService: ConfigService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly snsService: SnsService, // <-- ADD THIS
     private readonly cloudWatchTaskMetrics: CloudWatchTaskMetricsService,
   ) {
     this.tasksTableName =
@@ -356,6 +358,19 @@ export class TasksService {
 
     await this.cloudWatchTaskMetrics.recordTaskCreated(task.teamId);
 
+    //ADD THESE LINES RIGHT BELOW IT:
+    if (dto.assigneeId) {
+      await this.snsService.publishTaskAssigned({
+        taskId: task.taskId,
+        title: task.title,
+        assigneeId: dto.assigneeId,
+        teamId: dto.teamId,
+        priority: dto.priority,
+        deadline: dto.deadline,
+        assignedBy: user.fullName || user.userId,
+      });
+    }
+
     return this.enrichTaskWithImageUrls(task);
   }
 
@@ -464,6 +479,10 @@ export class TasksService {
     );
 
     const updated = result.Attributes || existing;
+
+    // ==========================================
+    // CLOUDWATCH: Record task closed
+    // ==========================================
     if (updates.status === 'Done' && existing.status !== 'Done') {
       await this.cloudWatchTaskMetrics.recordTaskClosed(
         updated.teamId ?? existing.teamId,
@@ -472,8 +491,127 @@ export class TasksService {
       );
     }
 
+    // ==========================================
+    // SNS: Notify if assignee changed (NEW CODE)
+    // ==========================================
+    if (dto.assigneeId && dto.assigneeId !== existing.assigneeId) {
+      await this.snsService.publishTaskAssigned({
+        taskId: taskId,
+        title: dto.title || existing.title,
+        assigneeId: dto.assigneeId,
+        teamId: dto.teamId || existing.teamId,
+        priority: dto.priority || existing.priority,
+        deadline: dto.deadline || existing.deadline,
+        assignedBy: user.fullName || user.userId,
+      });
+    }
+
     return this.enrichTaskWithImageUrls(updated);
   }
+
+  // async updateTaskForUser(
+  //   taskId: string,
+  //   dto: UpdateTaskDto,
+  //   user: CurrentUser,
+  // ) {
+  //   if (!this.isManager(user)) {
+  //     throw new ForbiddenException('Only managers can update tasks.');
+  //   }
+
+  //   const existing = await this.getTaskRecord(taskId);
+  //   await this.findOneForUser(taskId, user);
+
+  //   const now = new Date().toISOString();
+  //   const updates: Record<string, any> = { ...dto, updatedAt: now };
+  //   delete updates.clearImage;
+
+  //   if (dto.clearImage === true) {
+  //     updates.imageKey = null;
+  //   }
+
+  //   if (dto.imageKey) {
+  //     if (!isValidImageKey(dto.imageKey)) {
+  //       throw new BadRequestException('imageKey must start with originals/');
+  //     }
+
+  //     const previousKey = existing.imageKey as string | undefined;
+  //     if (previousKey && previousKey !== dto.imageKey) {
+  //       const history = Array.isArray(existing.imageHistory)
+  //         ? [...existing.imageHistory]
+  //         : [];
+  //       if (!history.includes(previousKey)) {
+  //         history.push(previousKey);
+  //       }
+  //       updates.imageHistory = history;
+  //     }
+  //     updates.imageKey = dto.imageKey;
+  //     await this.processUploadedImage(dto.imageKey);
+  //   }
+
+  //   const allowedFields = [
+  //     'title',
+  //     'description',
+  //     'priority',
+  //     'deadline',
+  //     'assigneeId',
+  //     'assigneeName',
+  //     'teamId',
+  //     'status',
+  //     'imageKey',
+  //     'imageHistory',
+  //     'updatedAt',
+  //   ];
+
+  //   const setParts: string[] = [];
+  //   const names: Record<string, string> = {};
+  //   const values: Record<string, any> = {};
+
+  //   for (const field of allowedFields) {
+  //     if (updates[field] === undefined) continue;
+  //     const nameKey = `#${field}`;
+  //     const valueKey = `:${field}`;
+  //     names[nameKey] = field;
+  //     values[valueKey] = updates[field];
+  //     setParts.push(`${nameKey} = ${valueKey}`);
+  //   }
+
+  //   if (dto.clearImage === true) {
+  //     setParts.push('imageKey = :emptyImage');
+  //     values[':emptyImage'] = null;
+  //   }
+
+  //   if (setParts.length === 0) {
+  //     return this.enrichTaskWithImageUrls(existing);
+  //   }
+
+  //   if (updates.status === 'Done' && existing.status !== 'Done') {
+  //     setParts.push('closedAt = :closedAt');
+  //     values[':closedAt'] = now;
+  //   }
+
+  //   const result = await this.awsService.dynamoDbDocClient.send(
+  //     new UpdateCommand({
+  //       TableName: this.tasksTableName,
+  //       Key: { taskId },
+  //       UpdateExpression: `SET ${setParts.join(', ')}`,
+  //       ExpressionAttributeNames:
+  //         Object.keys(names).length > 0 ? names : undefined,
+  //       ExpressionAttributeValues: values,
+  //       ReturnValues: 'ALL_NEW',
+  //     }),
+  //   );
+
+  //   const updated = result.Attributes || existing;
+  //   if (updates.status === 'Done' && existing.status !== 'Done') {
+  //     await this.cloudWatchTaskMetrics.recordTaskClosed(
+  //       updated.teamId ?? existing.teamId,
+  //       existing.createdAt,
+  //       now,
+  //     );
+  //   }
+
+  //   return this.enrichTaskWithImageUrls(updated);
+  // }
 
   async deleteTaskForUser(taskId: string, user: CurrentUser) {
     if (!this.isManagerOrAdmin(user)) {
