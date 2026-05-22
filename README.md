@@ -20,7 +20,7 @@ Below is the detailed AWS architecture diagram showing the high-availability set
 
 - **Architecture Diagram:** [`mini_jira_aws_architecture.html`](./mini_jira_aws_architecture.html) (interactive) / [`mini_jira_aws_architecture.svg`](./mini_jira_aws_architecture.svg) (preview)
 - **Live Application URL:** `[Insert CloudFront Distribution URL here]`
-- **Demo Video:** `[Insert Demo Video Link here]`
+- **Demo Video:** `[https://drive.google.com/file/d/1zFL8OxJd4s_YeoT8-w8E-5KSlQoZQSCQ/view?usp=drivesdk]`
 
 ## AWS Architecture
 
