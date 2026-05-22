@@ -53,15 +53,21 @@ export function clearStoredUserSession(): void {
 }
 
 export function mapCurrentUserToSession(user: CurrentUserResponse): UserSession {
+  const role = normalizeUserRole(user.role) ?? 'EMPLOYEE';
+
   return {
     userId: user.userId,
     name: user.profile.fullName ?? user.profile.name ?? user.email.split('@')[0],
     email: user.email,
-    role: user.role,
-    teamId: user.teamId,
+    role,
+    teamId: user.teamId ?? '',
     accessToken: user.accessToken,
     idToken: user.idToken,
-    profile: user.profile,
+    profile: {
+      ...user.profile,
+      role,
+      teamId: user.teamId ?? user.profile.teamId ?? '',
+    },
     mode: 'api',
   };
 }

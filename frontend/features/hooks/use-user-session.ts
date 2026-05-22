@@ -6,9 +6,11 @@ import { fetchCurrentUser } from '../api/current-user';
 import { normalizeApiError } from '../api/errors';
 import type { UserSessionState } from '../types/user.types';
 import { getSessionAccessReason } from '../utils/route-protection';
-import { getStoredAccessToken, logoutUserSession, mapCurrentUserToSession } from '../utils/session';
+import { logoutUserSession, mapCurrentUserToSession } from '../utils/session';
 
-function buildUnauthorizedState(reason: UserSessionState['reason'], error?: string): UserSessionState {
+type UnauthorizedReason = Extract<UserSessionState, { status: 'unauthorized' | 'forbidden' }>['reason'];
+
+function buildUnauthorizedState(reason: UnauthorizedReason, error?: string): UserSessionState {
   return {
     status: reason === 'forbidden_access' ? 'forbidden' : 'unauthorized',
     session: null,
@@ -24,13 +26,6 @@ export function useUserSession() {
   });
 
   const bootstrapSession = useCallback(async () => {
-    const accessToken = getStoredAccessToken();
-
-    if (!accessToken) {
-      setState(buildUnauthorizedState('missing_token'));
-      return;
-    }
-
     try {
       const currentUser = await fetchCurrentUser();
       setState({
@@ -39,7 +34,8 @@ export function useUserSession() {
       });
     } catch (error) {
       const normalizedError = normalizeApiError(error);
-      const reason = getSessionAccessReason(normalizedError.status);
+      const sessionReason = getSessionAccessReason(normalizedError.status);
+      const reason: UnauthorizedReason = sessionReason === 'unknown' ? 'missing_token' : sessionReason;
 
       if (reason === 'expired_token') {
         await logoutUserSession();

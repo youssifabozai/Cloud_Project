@@ -2,31 +2,54 @@ import api from './api';
 
 export interface DashboardSummary {
   totalTasks: number;
-  inProgressTasks: number;
-  inReviewTasks: number;
-  completedTasks: number;
-  cpuUtilization?: number;
+  openTasks: number;
+  closedTasks: number;
+  cpuUtilization: number;
 }
 
 export interface DistributionMetric {
-  teamDistribution: Record<string, number>;
-  statusDistribution?: Record<string, number>;
-  priorityDistribution?: Record<string, number>;
+  byStatus: Record<string, number>;
+  byPriority: Record<string, number>;
 }
 
-export type TimeSeriesPoint = Record<string, number | string | null>;
-export type BurndownPoint = Record<string, number | string | null>;
+export interface TimeSeriesPoint {
+  date: string;
+  created: number;
+  closed: number;
+}
+
+export interface BurndownSummary {
+  projectId: string;
+  totalProjectTasks: number;
+  closedProjectTasks: number;
+}
+
+interface ApiEnvelope<T> {
+  success: boolean;
+  message?: string;
+  data: T;
+}
 
 export const metricsService = {
-  getDashboardSummary: () =>
-    api.get<DashboardSummary>('/metrics/dashboard/summary'),
+  async getDashboardSummary() {
+    const response = await api.get<ApiEnvelope<DashboardSummary>>('/metrics/dashboard/summary');
+    return response.data;
+  },
 
-  getTimeSeries: () =>
-    api.get<TimeSeriesPoint[]>('/metrics/visualizations/time-series'),
+  async getTimeSeries() {
+    const response = await api.get<ApiEnvelope<TimeSeriesPoint[]>>('/metrics/visualizations/time-series');
+    return response.data;
+  },
 
-  getDistribution: () =>
-    api.get<DistributionMetric>('/metrics/visualizations/distribution'),
+  async getDistribution() {
+    const response = await api.get<ApiEnvelope<DistributionMetric>>('/metrics/visualizations/distribution');
+    return response.data;
+  },
 
-  getBurndown: (projectId: string) =>
-    api.get<BurndownPoint[]>(`/metrics/visualizations/burndown?projectId=${encodeURIComponent(projectId)}`),
+  async getBurndown(projectId: string) {
+    const response = await api.get<ApiEnvelope<BurndownSummary>>(
+      `/metrics/visualizations/burndown?projectId=${encodeURIComponent(projectId)}`,
+    );
+    return response.data;
+  },
 };

@@ -27,7 +27,9 @@ export function ProtectedLayout({
   signOut,
 }: ProtectedLayoutProps) {
   const router = useRouter();
-  const { session, isLoading, status, reason, refresh } = useUserSession();
+  const userSession = useUserSession();
+  const { session, isLoading, status, refresh } = userSession;
+  const reason = 'reason' in userSession ? userSession.reason : undefined;
   const logout = useUserLogout(signOut, fallbackPath);
 
   useEffect(() => {

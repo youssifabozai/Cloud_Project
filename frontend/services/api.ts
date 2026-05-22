@@ -6,7 +6,10 @@
 
 import type { ApiError } from '@/types';
 
-const API_BASE_URL = process.env.BACKEND_URL || 'http://localhost:4000';
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.BACKEND_URL ||
+  'http://localhost:4000';
 
 export class ApiRequestError extends Error {
   status: number;

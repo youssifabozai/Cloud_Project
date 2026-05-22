@@ -37,8 +37,7 @@ export function useDeleteUser(): UseDeleteUserState {
 
     try {
       const response = await usersService.deleteUser(normalizedUserId);
-      const payload = response.data;
-      const nextResult = { userId: normalizedUserId, message: payload.message };
+      const nextResult = { userId: normalizedUserId, message: response.message };
       setResult(nextResult);
       return nextResult;
     } catch (err) {

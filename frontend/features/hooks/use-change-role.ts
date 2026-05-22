@@ -49,8 +49,7 @@ export function useChangeRole(): UseChangeRoleState {
 
     try {
       const response = await usersService.updateRole(userId.trim(), normalizedRole);
-      const payload = response.data;
-      const nextResult = { userId: userId.trim(), role: normalizedRole, message: payload.message };
+      const nextResult = { userId: userId.trim(), role: normalizedRole, message: response.message };
       setResult(nextResult);
       return nextResult;
     } catch (err) {

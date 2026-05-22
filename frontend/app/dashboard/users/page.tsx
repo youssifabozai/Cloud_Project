@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { Suspense, useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'framer-motion';
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Users2, Building2, Sparkles, ArrowRight, RefreshCcw, Shield } from 'lucide-react';
 
-import { EmptyState, ProtectedLayout } from '@/features/components';
+import { EmptyState, LoadingState, ProtectedLayout } from '@/features/components';
 import { TeamMembersList } from '@/features/components';
 import { useTeamMembers, useRbac, useUserSession } from '@/features/hooks';
 
@@ -56,7 +56,7 @@ function TeamLookupForm({
   );
 }
 
-export default function TeamMembersPage() {
+function TeamMembersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { session } = useUserSession();
@@ -173,5 +173,13 @@ export default function TeamMembersPage() {
         </div>
       </div>
     </ProtectedLayout>
+  );
+}
+
+export default function TeamMembersPage() {
+  return (
+    <Suspense fallback={<LoadingState fullHeight title="Loading team members" description="Preparing the team roster." />}>
+      <TeamMembersContent />
+    </Suspense>
   );
 }
