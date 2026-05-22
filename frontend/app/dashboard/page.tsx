@@ -864,7 +864,7 @@ export default function DashboardPage() {
               Kanban Board
             </button>
             <button
-              onClick={() => setActiveTab('projects')}
+              onClick={() => router.push('/dashboard/projects')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'projects'
                 ? 'bg-white/54 text-[#A21BF4] shadow-sm'
                 : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
