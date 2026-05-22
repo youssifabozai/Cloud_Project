@@ -24,6 +24,8 @@ export class UsersService {
   private readonly teamsTableName: string;
   private readonly cognitoClient: CognitoIdentityProviderClient;
   private readonly userPoolId: string;
+  /** Log Scan fallback once per process (index missing or still CREATING) */
+  private hasWarnedTeamIndexFallback = false;
 
   private getErrorDetails(error: unknown): { message: string; stack?: string } {
     if (error instanceof Error) {
@@ -103,49 +105,122 @@ export class UsersService {
     );
   }
 
-  async getUsersByTeamId(teamId: string) {
-    try {
-      const command = new QueryCommand({
-        TableName: this.usersTableName,
-        IndexName: 'teamId-index',
-        KeyConditionExpression: 'teamId = :teamId',
-        ExpressionAttributeValues: {
-          ':teamId': teamId,
-        },
-      });
+  /** Legacy + display-name teamId values stored on user records */
+  private async resolveTeamLookupKeys(teamId: string): Promise<string[]> {
+    const keys = new Set<string>([teamId.trim()]);
 
-      const result = await this.awsService.dynamoDbDocClient.send(command);
-      return result.Items || [];
+    try {
+      const teamResult = await this.awsService.dynamoDbDocClient.send(
+        new GetCommand({
+          TableName: this.teamsTableName,
+          Key: { teamId },
+        }),
+      );
+      const team = teamResult.Item as { teamId?: string; name?: string } | undefined;
+      if (team?.name?.trim()) {
+        keys.add(team.name.trim());
+      }
+      if (team?.teamId?.trim()) {
+        keys.add(team.teamId.trim());
+      }
+    } catch {
+      // Team row optional for lookup expansion
+    }
+
+    if (keys.has('Frontend')) {
+      keys.add('team_frontend');
+    }
+    if (keys.has('team_frontend')) {
+      keys.add('Frontend');
+    }
+
+    return [...keys];
+  }
+
+  private warnTeamIndexFallbackOnce(): void {
+    if (this.hasWarnedTeamIndexFallback) {
+      return;
+    }
+    this.hasWarnedTeamIndexFallback = true;
+    this.logger.warn(
+      'teamId-index is missing or still CREATING on MiniJira-Users — using Scan for team lookups until the index is ACTIVE (run: node scripts/create-users-teamId-gsi.js)',
+    );
+  }
+
+  /** Query GSI or one Scan for multiple legacy teamId values (Frontend, team_frontend, uuid, …) */
+  private async fetchUsersMatchingTeamIds(
+    teamIds: string[],
+  ): Promise<Record<string, unknown>[]> {
+    const keys = [...new Set(teamIds.map((id) => id?.trim()).filter(Boolean))];
+    if (keys.length === 0) {
+      return [];
+    }
+
+    try {
+      const byUserId = new Map<string, Record<string, unknown>>();
+      for (const teamId of keys) {
+        const result = await this.awsService.dynamoDbDocClient.send(
+          new QueryCommand({
+            TableName: this.usersTableName,
+            IndexName: 'teamId-index',
+            KeyConditionExpression: 'teamId = :teamId',
+            ExpressionAttributeValues: { ':teamId': teamId },
+          }),
+        );
+        for (const item of result.Items || []) {
+          const id = String((item as { userId?: string }).userId ?? '');
+          if (id) {
+            byUserId.set(id, item as Record<string, unknown>);
+          }
+        }
+      }
+      return [...byUserId.values()];
     } catch (error: unknown) {
       if (!this.isMissingTeamIndexError(error)) {
         throw error;
       }
 
-      this.logger.warn(
-        'teamId-index is missing in DynamoDB; falling back to Scan for team-based user lookup',
-      );
+      this.warnTeamIndexFallbackOnce();
 
-      const users: any[] = [];
+      const values: Record<string, string> = {};
+      const placeholders: string[] = [];
+      keys.forEach((id, i) => {
+        const key = `:team${i}`;
+        placeholders.push(key);
+        values[key] = id;
+      });
+
+      const users: Record<string, unknown>[] = [];
       let lastEvaluatedKey: Record<string, unknown> | undefined;
 
       do {
-        const command = new ScanCommand({
-          TableName: this.usersTableName,
-          FilterExpression: 'teamId = :teamId',
-          ExpressionAttributeValues: {
-            ':teamId': teamId,
-          },
-          ExclusiveStartKey: lastEvaluatedKey,
-        });
-        const result = await this.awsService.dynamoDbDocClient.send(command);
+        const result = await this.awsService.dynamoDbDocClient.send(
+          new ScanCommand({
+            TableName: this.usersTableName,
+            FilterExpression: `teamId IN (${placeholders.join(', ')})`,
+            ExpressionAttributeValues: values,
+            ExclusiveStartKey: lastEvaluatedKey,
+          }),
+        );
         if (result.Items?.length) {
-          users.push(...result.Items);
+          users.push(...(result.Items as Record<string, unknown>[]));
         }
         lastEvaluatedKey = result.LastEvaluatedKey;
       } while (lastEvaluatedKey);
 
-      return users;
+      const byUserId = new Map<string, Record<string, unknown>>();
+      for (const user of users) {
+        const id = String(user.userId ?? '');
+        if (id) {
+          byUserId.set(id, user);
+        }
+      }
+      return [...byUserId.values()];
     }
+  }
+
+  async getUsersByTeamId(teamId: string) {
+    return this.fetchUsersMatchingTeamIds([teamId]);
   }
 
   constructor(
@@ -204,6 +279,100 @@ export class UsersService {
       this.logger.error(`Error fetching user by email ${email}: ${message}`, stack);
       throw error;
     }
+  }
+
+  /**
+   * Resolve the DynamoDB profile for a Cognito identity.
+   * Prefer PK lookup by Cognito `sub`; if missing, pick the newest email match.
+   */
+  async resolveUserForCognitoIdentity(
+    cognitoSub: string,
+    email?: string,
+  ): Promise<Record<string, any> | null> {
+    const byId = await this.getUserById(cognitoSub);
+    if (byId) {
+      return byId;
+    }
+
+    if (!email?.trim()) {
+      return null;
+    }
+
+    const targetEmail = email.trim().toLowerCase();
+    const users = await this.getAllUsers();
+    const matches = users.filter(
+      (user) =>
+        (user.email ?? '').toString().trim().toLowerCase() === targetEmail,
+    );
+
+    if (matches.length === 0) {
+      return null;
+    }
+
+    const exactSubMatch = matches.find((user) => user.userId === cognitoSub);
+    if (exactSubMatch) {
+      return exactSubMatch;
+    }
+
+    return matches.sort((a, b) =>
+      String(b.updatedAt ?? b.createdAt ?? '').localeCompare(
+        String(a.updatedAt ?? a.createdAt ?? ''),
+      ),
+    )[0];
+  }
+
+  /** Flat shape for frontend assignee dropdowns */
+  toPublicUserSummary(user: Record<string, unknown>): {
+    userId: string;
+    fullName: string;
+    name: string;
+    email: string;
+    role: string;
+    teamId: string;
+  } {
+    const userId = String(user.userId ?? '');
+    const email = String(user.email ?? '');
+    const fullName = String(
+      user.fullName ?? user.name ?? email.split('@')[0] ?? 'User',
+    );
+    return {
+      userId,
+      fullName,
+      name: fullName,
+      email,
+      role: String(user.role ?? 'EMPLOYEE').toUpperCase(),
+      teamId:
+        user.teamId === undefined || user.teamId === null
+          ? ''
+          : String(user.teamId),
+    };
+  }
+
+  /** Normalize role/team from a DynamoDB user row. */
+  toAuthenticatedUser(
+    dbUser: Record<string, any>,
+    cognitoSub: string,
+  ): {
+    userId: string;
+    email: string;
+    role: string;
+    teamId: string | null;
+    fullName?: string;
+  } {
+    const role = this.normalizeRole(String(dbUser.role ?? 'EMPLOYEE').trim());
+    const teamId = dbUser.teamId;
+    const normalizedTeamId =
+      teamId === undefined || teamId === null || teamId === ''
+        ? null
+        : String(teamId);
+
+    return {
+      userId: cognitoSub,
+      email: dbUser.email,
+      role: role ?? Role.EMPLOYEE,
+      teamId: role === Role.EMPLOYEE ? normalizedTeamId : null,
+      fullName: dbUser.fullName,
+    };
   }
 
   private async syncUserToCognito(user: { email?: string; fullName?: string; role?: string; teamId?: string }) {
@@ -349,14 +518,22 @@ export class UsersService {
       if (!userRecord) {
         throw new NotFoundException(`User ${currentUser.userId} not found`);
       }
+      const role =
+        this.normalizeRole(String(userRecord.role ?? '').trim()) ??
+        Role.EMPLOYEE;
+      const teamId =
+        role === Role.EMPLOYEE
+          ? userRecord.teamId ?? currentUser.teamId ?? null
+          : null;
+
       return {
         success: true,
         message: 'Current user profile fetched successfully',
         data: {
-          userId: currentUser.userId,
-          role: currentUser.role,
-          teamId: currentUser.teamId,
-          email: currentUser.email,
+          userId: userRecord.userId ?? currentUser.userId,
+          role,
+          teamId: teamId ?? '',
+          email: userRecord.email ?? currentUser.email,
           profile: userRecord,
         },
       };
@@ -532,15 +709,23 @@ export class UsersService {
         throw new BadRequestException('teamId parameter is required');
       }
 
-      const users = await this.getUsersByTeamId(teamId);
+      const lookupKeys = await this.resolveTeamLookupKeys(teamId);
+      const users = await this.fetchUsersMatchingTeamIds(lookupKeys);
+      const normalized = users
+        .map((u) => this.toPublicUserSummary(u))
+        .filter((u) => {
+          const tid = u.teamId?.toLowerCase() ?? '';
+          return tid !== '' && tid !== 'none' && tid !== 'null';
+        });
 
       return {
         success: true,
         message: `Users for team ${teamId} fetched successfully`,
         data: {
           teamId,
-          total: users.length,
-          users,
+          lookupKeys,
+          total: normalized.length,
+          users: normalized,
         },
       };
     } catch (error: unknown) {

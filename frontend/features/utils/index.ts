@@ -9,3 +9,4 @@ export {
   shouldRedirectToLogin,
 } from './route-protection';
 export * from './session';
+export * from './task-image-upload';

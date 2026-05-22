@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Box, Briefcase, Key, Mail, User } from "lucide-react";
+import { AlertCircle, ArrowRight, Box, Key, Mail, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/context/ToastContext";
@@ -16,22 +16,13 @@ export default function RegisterPage() {
   const [team, setTeam] = useState("Frontend");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [registerMode, setRegisterMode] = useState<"api" | "mock">("api");
   const auth = useAuth();
   const theme = auth.theme;
   const { pushToast } = useToast();
-  useEffect(() => {
-    auth.setMode(registerMode);
-  }, [auth, registerMode]);
+
   const normalizeRole = (value: "Manager" | "Employee" | "Admin"): UserRole => {
-    if (value === "Manager") {
-      return "MANAGER";
-    }
-
-    if (value === "Admin") {
-      return "ADMIN";
-    }
-
+    if (value === "Manager") return "MANAGER";
+    if (value === "Admin") return "ADMIN";
     return "EMPLOYEE";
   };
 
@@ -41,7 +32,7 @@ export default function RegisterPage() {
 
     if (password.length < 8) {
       setError("Password must be at least 8 characters.");
-      pushToast("info", "Make a strong password", "Use at least 8 characters and include a mix of letters, numbers, and symbols.");
+      pushToast("info", "Make a strong password", "Use at least 8 characters.");
       return;
     }
 
@@ -49,8 +40,14 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      auth.setMode(registerMode);
-      await auth.register({ email, password, fullName, role: normalizeRole(role), team });
+      await auth.register({
+        email,
+        password,
+        fullName,
+        role: normalizeRole(role),
+        team: role === "Employee" ? team : "",
+      });
+      pushToast("success", "Account created", "Sign in with your new credentials.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
       setLoading(false);
@@ -70,23 +67,9 @@ export default function RegisterPage() {
             <Box className="h-7 w-7" />
           </Link>
           <h1 className="text-3xl font-black">Create Staff Profile</h1>
-          <p className="text-sm font-medium text-[#475569]">Provision a cloud workspace identity for the demo.</p>
-        </div>
-
-        <div className="cloud-card mb-5 grid grid-cols-2 rounded-2xl p-1.5 text-xs font-black">
-          {(["mock", "api"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => {
-                setRegisterMode(mode);
-                auth.setMode(mode);
-                setError(null);
-              }}
-              className={`rounded-xl py-2.5 transition ${registerMode === mode ? "cloud-button" : "text-[#475569] hover:bg-white/38"}`}
-            >
-              {mode === "mock" ? "Sandbox Setup" : "Live API"}
-            </button>
-          ))}
+          <p className="text-sm font-medium text-[#475569]">
+            Registers in Cognito and DynamoDB via the live API.
+          </p>
         </div>
 
         <div className="cloud-card rounded-[30px] p-8">
@@ -139,7 +122,11 @@ export default function RegisterPage() {
                 <span className="text-[10px] uppercase text-[#475569]">Corporate Role</span>
                 <select
                   value={role}
-                  onChange={(e) => setRole(e.target.value as "Manager" | "Employee" | "Admin")}
+                  onChange={(e) => {
+                    const next = e.target.value as "Manager" | "Employee" | "Admin";
+                    setRole(next);
+                    if (next !== "Employee") setTeam("");
+                  }}
                   className="rounded-2xl border border-white/70 bg-white/44 p-3 outline-none focus:ring-2 focus:ring-[#C832FF]/35"
                 >
                   <option value="Employee">Employee</option>
@@ -190,7 +177,7 @@ function Field({
   label,
   children,
 }: {
-  icon: typeof Briefcase;
+  icon: typeof User;
   label: string;
   children: React.ReactNode;
 }) {

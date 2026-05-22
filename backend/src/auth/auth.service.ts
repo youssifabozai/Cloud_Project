@@ -94,18 +94,22 @@ export class AuthService {
       const userId = attributes.sub;
       const email = attributes.email;
       const fullName = attributes.name ?? null;
-      let dbUser = await this.usersService.getUserById(userId);
-
-      if (!dbUser && email) {
-        dbUser = await this.usersService.getUserByEmail(email);
-      }
+      let dbUser = await this.usersService.resolveUserForCognitoIdentity(
+        userId,
+        email,
+      );
 
       if (!dbUser) {
+        const cognitoRole = (attributes['custom:role'] ?? 'EMPLOYEE')
+          .toString()
+          .trim()
+          .toUpperCase();
+        const cognitoTeam = attributes['custom:team'] ?? '';
         dbUser = await this.usersService.createUser(userId, {
           email,
           fullName,
-          role: (attributes['custom:role'] ?? 'EMPLOYEE').toUpperCase(),
-          teamId: attributes['custom:team'] ?? null,
+          role: cognitoRole,
+          teamId: cognitoTeam,
         });
       }
 
@@ -119,19 +123,29 @@ export class AuthService {
         }
 
         if (Object.keys(profileUpdates).length > 0) {
-          await this.usersService.updateUser(userId, profileUpdates);
+          await this.usersService.updateUser(
+            dbUser.userId ?? userId,
+            profileUpdates,
+          );
           dbUser = { ...dbUser, ...profileUpdates };
         }
       }
 
+      if (!dbUser) {
+        throw new UnauthorizedException('Unable to resolve user profile');
+      }
+
+      const identity = this.usersService.toAuthenticatedUser(dbUser, userId);
+
       return {
         username: response.Username,
         sub: userId,
-        email,
+        email: identity.email ?? email,
         emailVerified: attributes.email_verified === 'true',
-        role: dbUser?.role ?? attributes['custom:role'] ?? 'EMPLOYEE',
-        team: dbUser?.teamId ?? attributes['custom:team'] ?? null,
-        fullName: dbUser?.fullName ?? fullName,
+        role: identity.role,
+        team: identity.teamId,
+        teamId: identity.teamId,
+        fullName: identity.fullName ?? fullName,
       };
     } catch (error) {
       this.logger.error('Cognito get user error:', error);
@@ -220,14 +234,32 @@ export class AuthService {
     email: string;
     password: string;
     fullName: string;
+    role?: Role;
     team?: string;
   }) {
+    const role = (data.role ?? Role.EMPLOYEE).toUpperCase() as Role;
+    const validRoles = [Role.EMPLOYEE, Role.MANAGER, Role.ADMIN];
+    if (!validRoles.includes(role)) {
+      throw new BadRequestException(
+        'role must be EMPLOYEE, MANAGER, or ADMIN',
+      );
+    }
+
+    const team =
+      role === Role.EMPLOYEE ? (data.team?.trim() || '') : '';
+
+    if (role === Role.EMPLOYEE && !team) {
+      throw new BadRequestException(
+        'team is required when registering as EMPLOYEE',
+      );
+    }
+
     return this.createUser({
       email: data.email,
       password: data.password,
       fullName: data.fullName,
-      role: Role.EMPLOYEE,
-      team: data.team ?? '',
+      role,
+      team,
     });
   }
 

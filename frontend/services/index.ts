@@ -7,5 +7,6 @@ export { usersService }   from './users.service';
 export { teamsService }    from './teams.service';
 export { metricsService }  from './metrics.service';
 export { notificationsService } from './notifications.service';
-export * from './mock.service';
+export { commentsService } from './comments.service';
+export { auditLogsService } from './audit-logs.service';
 

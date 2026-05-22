@@ -13,16 +13,22 @@ export interface CreateTeamDto {
   description?: string;
 }
 
+type TeamsListResponse = {
+  success: boolean;
+  message: string;
+  data: {
+    scope: string;
+    total: number;
+    teams: Team[];
+  };
+};
+
 export const teamsService = {
-  getAll: () =>
-    api.get<Team[]>('/teams'),
-
-  getById: (teamId: string) =>
-    api.get<Team>(`/teams/${teamId}`),
-
-  create: (dto: CreateTeamDto) =>
-    api.post<Team>('/teams', dto),
-
-  remove: (teamId: string) =>
-    api.delete<{ success: boolean }>(`/teams/${teamId}`),
+  getAll: async () => {
+    const res = await api.get<TeamsListResponse>('/teams');
+    return res.data?.teams ?? [];
+  },
+  getById: (teamId: string) => api.get<Team>(`/teams/${teamId}`),
+  create: (dto: CreateTeamDto) => api.post<Team>('/teams', dto),
+  remove: (teamId: string) => api.delete<{ success: boolean }>(`/teams/${teamId}`),
 };

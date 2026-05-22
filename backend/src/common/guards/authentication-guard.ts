@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import { SimpleJwksCache } from 'aws-jwt-verify/jwk';
 import {
   CognitoIdentityProviderClient,
   GetUserCommand,
@@ -14,15 +15,34 @@ import {
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { UsersService } from '../../users/users.service';
 
+/** Default: 7 days — avoids Cognito JWKS / GetUser rate limits */
+const AUTH_CACHE_TTL_MS =
+  Number(process.env.AUTH_CACHE_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
+
+type CachedAuthContext = {
+  expiresAt: number;
+  user: Record<string, unknown>;
+  username?: string;
+};
+
 @Injectable()
 export class AuthenticationGuard implements CanActivate {
   private readonly region = process.env.AWS_REGION || 'us-east-1';
 
-  private readonly verifier = CognitoJwtVerifier.create({
-    userPoolId: process.env.COGNITO_USER_POOL_ID!,
-    tokenUse: 'access',
-    clientId: process.env.COGNITO_CLIENT_ID!,
-  });
+  private readonly verifier = CognitoJwtVerifier.create(
+    {
+      userPoolId: process.env.COGNITO_USER_POOL_ID!,
+      tokenUse: 'access',
+      clientId: process.env.COGNITO_CLIENT_ID!,
+    },
+    {
+      // Reuse JWKS keys across requests (reduces Cognito .well-known/jwks.json calls)
+      jwksCache: new SimpleJwksCache(),
+    },
+  );
+
+  /** In-memory cache: one Cognito GetUser + DB resolve per user per week */
+  private readonly userContextCache = new Map<string, CachedAuthContext>();
 
   private readonly cognitoClient = new CognitoIdentityProviderClient({
     region: this.region,
@@ -62,19 +82,29 @@ export class AuthenticationGuard implements CanActivate {
       const payload = await this.verifier.verify(token!);
       const userId = payload.sub;
 
-      // Fetch full profile from DynamoDB (Source of Truth for Roles)
-      let dbUser = await this.usersService.getUserById(userId);
+      const cached = this.getUserFromCache(userId);
+      if (cached) {
+        request.user = cached.user;
+        return true;
+      }
+
+      let dbUser = await this.usersService.resolveUserForCognitoIdentity(
+        userId,
+      );
+
       let cognitoEmail: string | undefined;
+      let cognitoUsername: string | undefined =
+        typeof payload.username === 'string' ? payload.username : undefined;
+      let attributes: Record<string, string | undefined> = {};
 
       if (!dbUser) {
-        // Fallback to Cognito attributes so we can recover legacy users stored by email.
         const userResponse = await this.cognitoClient.send(
           new GetUserCommand({
             AccessToken: token,
           }),
         );
 
-        const attributes = Object.fromEntries(
+        attributes = Object.fromEntries(
           (userResponse.UserAttributes ?? []).map((attr) => [
             attr.Name as string,
             attr.Value,
@@ -82,34 +112,64 @@ export class AuthenticationGuard implements CanActivate {
         );
 
         cognitoEmail = attributes.email;
-        if (cognitoEmail) {
-          dbUser = await this.usersService.getUserByEmail(cognitoEmail);
-        }
+        cognitoUsername = userResponse.Username ?? cognitoUsername;
 
-        if (!dbUser) {
-          request.user = {
-            userId: userId,
-            username: userResponse.Username,
-            email: cognitoEmail,
-            role: 'EMPLOYEE', // Default for unknown DB users
-            teamId: null,
-          };
-          return true;
-        }
+        dbUser = await this.usersService.resolveUserForCognitoIdentity(
+          userId,
+          cognitoEmail,
+        );
       }
 
-      request.user = {
-        userId: dbUser.userId,
-        email: dbUser.email,
-        role: String(dbUser.role || 'EMPLOYEE').trim().toUpperCase(),
-        teamId: dbUser.teamId,
-        fullName: dbUser.fullName,
-      };
+      let requestUser: Record<string, unknown>;
 
+      if (!dbUser) {
+        const cognitoRole = (attributes['custom:role'] ?? 'EMPLOYEE')
+          .toString()
+          .trim()
+          .toUpperCase();
+        requestUser = {
+          userId,
+          username: cognitoUsername,
+          email: cognitoEmail,
+          role: cognitoRole,
+          teamId: attributes['custom:team'] || null,
+        };
+      } else {
+        requestUser = this.usersService.toAuthenticatedUser(dbUser, userId);
+        (requestUser as { username?: string }).username = cognitoUsername;
+      }
+
+      this.setUserCache(userId, requestUser);
+      request.user = requestUser;
       return true;
     } catch (error: any) {
-      this.logger.error('JWT AUTH ERROR:', error?.message);
+      const message = error?.message ?? 'Unknown error';
+      this.logger.error('JWT AUTH ERROR:', message);
+      if (/rate exceeded/i.test(message)) {
+        throw new UnauthorizedException(
+          'Cognito rate limit — wait a moment and retry, or log in again',
+        );
+      }
       throw new UnauthorizedException('Invalid or expired token');
     }
+  }
+
+  private getUserFromCache(userId: string): CachedAuthContext | null {
+    const entry = this.userContextCache.get(userId);
+    if (!entry) {
+      return null;
+    }
+    if (Date.now() > entry.expiresAt) {
+      this.userContextCache.delete(userId);
+      return null;
+    }
+    return entry;
+  }
+
+  private setUserCache(userId: string, user: Record<string, unknown>): void {
+    this.userContextCache.set(userId, {
+      expiresAt: Date.now() + AUTH_CACHE_TTL_MS,
+      user,
+    });
   }
 }

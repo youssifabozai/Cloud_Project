@@ -1,586 +1,619 @@
 import {
-    BadRequestException,
-    ForbiddenException,
-    Injectable,
-    Logger,
-    NotFoundException,
-    UnauthorizedException,
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-    DeleteCommand,
-    GetCommand,
-    PutCommand,
-    QueryCommand,
-    ScanCommand,
-    UpdateCommand,
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  ScanCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import sharp from 'sharp';
 import { AwsService } from '../AWS/aws.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogsService } from '../audit-Logs/audit-logs.service';
+import { CloudWatchTaskMetricsService } from '../metrics/cloudwatch-task-metrics.service';
 import { v4 as uuidv4 } from 'uuid';
+import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
+import {
+  assertFileNameMatchesContentType,
+  isAllowedImageContentType,
+  isValidImageKey,
+  toResizedKey,
+  ORIGINALS_PREFIX,
+} from './tasks-image.util';
 
 type CurrentUser = {
-    userId: string;
-    role: string;
-    teamId?: string | null;
+  userId: string;
+  role: string;
+  teamId: string;
+  fullName?: string;
 };
 
-type NormalizedCurrentUser = CurrentUser & {
-    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
-};
-
-type TaskPayload = Record<string, any>;
-
-const ALLOWED_STATUSES = ['To Do', 'In Progress', 'In Review', 'Done'];
-const ALLOWED_PRIORITIES = ['Low', 'Medium', 'High'];
-const REQUIRED_CREATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'assigneeId', 'teamId'];
-const ALLOWED_CREATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'assigneeId', 'teamId', 'projectId'];
-const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'teamId', 'assigneeId', 'projectId', 'status'];
-const STATUS_SEQUENCE = ['To Do', 'In Progress', 'In Review', 'Done'];
+const PRESIGNED_GET_EXPIRY_SECONDS = 3600;
+const PRESIGNED_PUT_EXPIRY_SECONDS = 900;
 
 @Injectable()
 export class TasksService {
-    private readonly logger = new Logger(TasksService.name);
-    private readonly tasksTableName: string;
-    private readonly activityLogTableName: string;
-    private readonly usersTableName: string;
-    private readonly teamsTableName: string;
+  private readonly tasksTableName: string;
+  private readonly originalsBucketName: string;
+  private readonly resizedBucketName: string;
 
-    constructor(
-        private readonly awsService: AwsService,
-        private readonly configService: ConfigService,
-        private readonly notificationsService: NotificationsService,
-    ) {
-        this.tasksTableName =
-            this.configService.get<string>('TABLE_TASKS') || 'mini-jira-Tasks';
-        this.activityLogTableName =
-            this.configService.get<string>('TABLE_ACTIVITY_LOG') ||
-            'mini-jira-ActivityLog';
-        this.usersTableName = this.configService.get<string>('TABLE_USERS') || '';
-        this.teamsTableName = this.configService.get<string>('TABLE_TEAMS') || '';
+  constructor(
+    private readonly awsService: AwsService,
+    private readonly configService: ConfigService,
+    private readonly auditLogsService: AuditLogsService,
+    private readonly cloudWatchTaskMetrics: CloudWatchTaskMetricsService,
+  ) {
+    this.tasksTableName =
+      this.configService.get<string>('TABLE_TASKS') || 'mini-jira-Tasks';
+    this.originalsBucketName =
+      this.configService.get<string>('ORIGINAL_IMAGES_BUCKET') ||
+      'original-images';
+    this.resizedBucketName =
+      this.configService.get<string>('RESIZED_IMAGES_BUCKET') ||
+      'resized-images';
+  }
+
+  private isManagerOrAdmin(user: CurrentUser): boolean {
+    const r = user.role?.toUpperCase();
+    return r === 'MANAGER' || r === 'ADMIN';
+  }
+
+  private isManager(user: CurrentUser): boolean {
+    return user.role?.toUpperCase() === 'MANAGER';
+  }
+
+  private async enrichTaskWithImageUrls(
+    task: Record<string, any>,
+  ): Promise<Record<string, any>> {
+    if (!task?.imageKey || !isValidImageKey(task.imageKey)) {
+      return task;
     }
 
-    private normalizeUser(user: CurrentUser | null | undefined): NormalizedCurrentUser {
-        if (!user?.userId) {
-            throw new UnauthorizedException('Authenticated user is required.');
-        }
+    const resizedKey = toResizedKey(task.imageKey);
 
-        const role = String(user.role || '').trim().toUpperCase();
+    const imageUrl = await getSignedUrl(
+      this.awsService.s3Client,
+      new GetObjectCommand({
+        Bucket: this.originalsBucketName,
+        Key: task.imageKey,
+      }),
+      { expiresIn: PRESIGNED_GET_EXPIRY_SECONDS },
+    );
 
-        if (role !== 'ADMIN' && role !== 'MANAGER' && role !== 'EMPLOYEE') {
-            throw new ForbiddenException('Access denied: unsupported user role.');
-        }
-
-        return {
-            ...user,
-            role,
-        };
+    let thumbnailUrl: string | undefined;
+    if (await this.resizedObjectExists(resizedKey)) {
+      thumbnailUrl = await getSignedUrl(
+        this.awsService.s3Client,
+        new GetObjectCommand({
+          Bucket: this.resizedBucketName,
+          Key: resizedKey,
+        }),
+        { expiresIn: PRESIGNED_GET_EXPIRY_SECONDS },
+      );
     }
 
-    private isManagerOrAdmin(user: NormalizedCurrentUser): boolean {
-        return user.role === 'MANAGER' || user.role === 'ADMIN';
-    }
+    return {
+      ...task,
+      imageUrl,
+      thumbnailUrl,
+      resizedKey,
+    };
+  }
 
-    private assertManagerOrAdmin(user: NormalizedCurrentUser) {
-        if (!this.isManagerOrAdmin(user)) {
-            throw new ForbiddenException('Only manager or admin users can perform this action.');
-        }
-    }
+  private async enrichTasks(
+    items: Record<string, any>[],
+  ): Promise<Record<string, any>[]> {
+    return Promise.all(items.map((t) => this.enrichTaskWithImageUrls(t)));
+  }
 
-    private getAssignedUserId(task: Record<string, any>): string | undefined {
-        return task.assigneeId ?? task.assignedUserId ?? task.assignedToUserId ?? task.assignedTo;
-    }
+  async findAllForUser(user: CurrentUser, requestedTeamId?: string) {
+    let items: Record<string, any>[];
 
-    private validateStatus(status: string) {
-        if (!ALLOWED_STATUSES.includes(status)) {
-            throw new BadRequestException(
-                `Invalid task status. Must be one of: ${ALLOWED_STATUSES.join(', ')}.`,
-            );
-        }
-    }
-
-    private validateStatusTransition(currentStatus: string, newStatus: string) {
-        this.validateStatus(currentStatus);
-        this.validateStatus(newStatus);
-
-        if (currentStatus === newStatus) {
-            throw new BadRequestException(`Task is already in status ${newStatus}.`);
-        }
-
-        const currentIndex = STATUS_SEQUENCE.indexOf(currentStatus);
-        const nextIndex = STATUS_SEQUENCE.indexOf(newStatus);
-
-        if (nextIndex !== currentIndex + 1) {
-            throw new BadRequestException(
-                `Invalid status transition from ${currentStatus} to ${newStatus}. Allowed flow is: ${STATUS_SEQUENCE.join(' -> ')}.`,
-            );
-        }
-    }
-
-    private validatePriority(priority: string) {
-        if (!ALLOWED_PRIORITIES.includes(priority)) {
-            throw new BadRequestException(
-                `Invalid task priority. Must be one of: ${ALLOWED_PRIORITIES.join(', ')}.`,
-            );
-        }
-    }
-
-    private validateDeadline(deadline: string) {
-        if (!deadline || Number.isNaN(Date.parse(deadline))) {
-            throw new BadRequestException('deadline must be a valid date string.');
-        }
-    }
-
-    private validateRequiredFields(body: TaskPayload) {
-        const missingFields = REQUIRED_CREATE_FIELDS.filter((field) => body[field] === undefined || body[field] === null || body[field] === '');
-
-        if (missingFields.length > 0) {
-            throw new BadRequestException(`Missing required task fields: ${missingFields.join(', ')}.`);
-        }
-    }
-
-    private async getTaskOrThrow(taskId: string) {
+    if (this.isManagerOrAdmin(user)) {
+      if (requestedTeamId) {
+        items = await this.findByTeamId(requestedTeamId);
+      } else {
         const result = await this.awsService.dynamoDbDocClient.send(
-            new GetCommand({
-                TableName: this.tasksTableName,
-                Key: {
-                    taskId,
-                },
-            }),
+          new ScanCommand({ TableName: this.tasksTableName }),
         );
-
-        if (!result.Item) {
-            throw new NotFoundException('Task not found.');
-        }
-
-        return result.Item;
+        items = result.Items || [];
+      }
+    } else {
+      if (!user.teamId) {
+        throw new ForbiddenException('Employee does not have a teamId.');
+      }
+      if (requestedTeamId && requestedTeamId !== user.teamId) {
+        throw new ForbiddenException('You cannot view another team’s tasks.');
+      }
+      items = await this.findByTeamId(user.teamId);
     }
 
-    private async getUserForValidation(userId: string) {
-        if (!this.usersTableName) {
-            throw new BadRequestException('User validation is not configured.');
-        }
+    return this.enrichTasks(items);
+  }
 
-        const result = await this.awsService.dynamoDbDocClient.send(
-            new GetCommand({
-                TableName: this.usersTableName,
-                Key: {
-                    userId,
-                },
-            }),
-        );
+  async findOneForUser(taskId: string, user: CurrentUser) {
+    const task = await this.getTaskRecord(taskId);
 
-        if (!result.Item) {
-            throw new BadRequestException(`Assignee ${userId} was not found.`);
-        }
-
-        return result.Item;
+    if (!this.isManagerOrAdmin(user) && task.teamId !== user.teamId) {
+      throw new ForbiddenException('You cannot view another team’s task.');
     }
 
-    private async getTeamForValidation(teamId: string) {
-        if (!this.teamsTableName) {
-            throw new BadRequestException('Team validation is not configured.');
-        }
+    return this.enrichTaskWithImageUrls(task);
+  }
 
-        const result = await this.awsService.dynamoDbDocClient.send(
-            new GetCommand({
-                TableName: this.teamsTableName,
-                Key: {
-                    teamId,
-                },
-            }),
-        );
+  private async getTaskRecord(taskId: string): Promise<Record<string, any>> {
+    const result = await this.awsService.dynamoDbDocClient.send(
+      new GetCommand({
+        TableName: this.tasksTableName,
+        Key: { taskId },
+      }),
+    );
 
-        if (!result.Item) {
-            throw new BadRequestException(`Team ${teamId} was not found.`);
-        }
-
-        return result.Item;
+    if (!result.Item) {
+      throw new NotFoundException('Task not found.');
     }
 
-    private async validateAssigneeBelongsToTeam(assigneeId: string, teamId: string) {
-        if (!assigneeId) {
-            throw new BadRequestException('assigneeId is required.');
-        }
+    return result.Item;
+  }
 
-        if (!teamId) {
-            throw new BadRequestException('teamId is required.');
-        }
+  private async findByTeamId(teamId: string) {
+    const result = await this.awsService.dynamoDbDocClient.send(
+      new QueryCommand({
+        TableName: this.tasksTableName,
+        IndexName: 'teamId-index',
+        KeyConditionExpression: 'teamId = :teamId',
+        ExpressionAttributeValues: { ':teamId': teamId },
+      }),
+    );
 
-        await this.getTeamForValidation(teamId);
-        const assignee = await this.getUserForValidation(assigneeId);
+    return result.Items || [];
+  }
 
-        if (assignee.teamId !== teamId) {
-            throw new BadRequestException(`Assignee ${assigneeId} does not belong to team ${teamId}.`);
-        }
+  async generateUploadUrl(fileName: string, contentType: string) {
+    if (!fileName?.trim()) {
+      throw new BadRequestException('fileName is required.');
     }
 
-    private async writeActivityLog(item: Record<string, any>) {
-        await this.awsService.dynamoDbDocClient.send(
-            new PutCommand({
-                TableName: this.activityLogTableName,
-                Item: {
-                    logId: uuidv4(),
-                    createdAt: new Date().toISOString(),
-                    ...item,
-                },
-            }),
-        );
+    const normalizedType = contentType?.toLowerCase().trim();
+    if (!normalizedType || !isAllowedImageContentType(normalizedType)) {
+      throw new BadRequestException(
+        'contentType must be image/jpeg, image/png, image/webp, or image/gif',
+      );
     }
 
-    private sortLogsByCreatedAt(logs: Record<string, any>[]) {
-        return logs.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+    try {
+      assertFileNameMatchesContentType(fileName.trim(), normalizedType);
+    } catch {
+      throw new BadRequestException(
+        'fileName extension does not match contentType',
+      );
     }
 
-    private async queryActivityLogsByTaskId(taskId: string) {
-        try {
-            const result = await this.awsService.dynamoDbDocClient.send(
-                new QueryCommand({
-                    TableName: this.activityLogTableName,
-                    IndexName: 'taskId-index',
-                    KeyConditionExpression: 'taskId = :taskId',
-                    ExpressionAttributeValues: {
-                        ':taskId': taskId,
-                    },
-                }),
-            );
+    const safeName = fileName.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `${ORIGINALS_PREFIX}${uuidv4()}-${safeName}`;
 
-            return this.sortLogsByCreatedAt(result.Items ?? []);
-        } catch (error: any) {
-            if (error.name !== 'ValidationException') {
-                throw error;
-            }
+    const command = new PutObjectCommand({
+      Bucket: this.originalsBucketName,
+      Key: key,
+      ContentType: normalizedType,
+    });
 
-            this.logger.warn('taskId-index is missing on ActivityLog; falling back to Scan for task history.');
-            const result = await this.awsService.dynamoDbDocClient.send(
-                new ScanCommand({
-                    TableName: this.activityLogTableName,
-                    FilterExpression: 'taskId = :taskId',
-                    ExpressionAttributeValues: {
-                        ':taskId': taskId,
-                    },
-                }),
-            );
+    const uploadUrl = await getSignedUrl(
+      this.awsService.s3Client,
+      command,
+      { expiresIn: PRESIGNED_PUT_EXPIRY_SECONDS },
+    );
 
-            return this.sortLogsByCreatedAt(result.Items ?? []);
-        }
+    return {
+      uploadUrl,
+      key,
+      expiresIn: PRESIGNED_PUT_EXPIRY_SECONDS,
+      originalsBucket: this.originalsBucketName,
+      resizedBucket: this.resizedBucketName,
+      resizedKeyPreview: toResizedKey(key),
+    };
+  }
+
+  /** Copy originals/ key → resized/ thumbnail (300px wide). Used when Lambda is not wired. */
+  async processUploadedImage(imageKey: string): Promise<{
+    imageKey: string;
+    resizedKey: string;
+    resizedBucket: string;
+  }> {
+    if (!isValidImageKey(imageKey)) {
+      throw new BadRequestException('imageKey must start with originals/');
     }
 
-    private async publishTaskAssignment(task: Record<string, any>, assigneeId: string) {
-        try {
-            await this.notificationsService.dispatchSnsNotification(
-                `You have been assigned task: ${task.title ?? task.taskId}`,
-                assigneeId,
-            );
-        } catch (error: any) {
-            this.logger.warn(`Failed to publish assignment notification for task ${task.taskId}: ${error?.message}`);
-        }
+    const resizedKey = toResizedKey(imageKey);
+
+    const sourceObject = await this.awsService.s3Client.send(
+      new GetObjectCommand({
+        Bucket: this.originalsBucketName,
+        Key: imageKey,
+      }),
+    );
+
+    const bodyBuffer = await this.streamBodyToBuffer(sourceObject.Body);
+    const resizedBuffer = await sharp(bodyBuffer)
+      .resize({ width: 300 })
+      .toBuffer();
+
+    await this.awsService.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.resizedBucketName,
+        Key: resizedKey,
+        Body: resizedBuffer,
+        ContentType: sourceObject.ContentType || 'image/jpeg',
+      }),
+    );
+
+    return {
+      imageKey,
+      resizedKey,
+      resizedBucket: this.resizedBucketName,
+    };
+  }
+
+  private async resizedObjectExists(resizedKey: string): Promise<boolean> {
+    try {
+      await this.awsService.s3Client.send(
+        new HeadObjectCommand({
+          Bucket: this.resizedBucketName,
+          Key: resizedKey,
+        }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async streamBodyToBuffer(body: unknown): Promise<Buffer> {
+    if (!body) {
+      throw new BadRequestException('Original image is empty in S3');
+    }
+    if (Buffer.isBuffer(body)) {
+      return body;
+    }
+    if (body instanceof Uint8Array) {
+      return Buffer.from(body);
     }
 
-    async createForUser(body: TaskPayload, user: CurrentUser) {
-        const currentUser = this.normalizeUser(user);
-        this.assertManagerOrAdmin(currentUser);
-        this.validateRequiredFields(body);
-        this.validatePriority(body.priority);
-        this.validateDeadline(body.deadline);
+    const chunks: Buffer[] = [];
+    for await (const chunk of body as AsyncIterable<Uint8Array | Buffer>) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
 
-        const status = body.status ?? 'To Do';
-        this.validateStatus(status);
-        await this.validateAssigneeBelongsToTeam(body.assigneeId, body.teamId);
-
-        const now = new Date().toISOString();
-        const taskId = uuidv4();
-        const task = ALLOWED_CREATE_FIELDS.reduce((item, field) => {
-            if (body[field] !== undefined) {
-                item[field] = body[field];
-            }
-
-            return item;
-        }, {} as Record<string, any>);
-
-        Object.assign(task, {
-            taskId,
-            status,
-            createdBy: currentUser.userId,
-            closedAt: status === 'Done' ? now : null,
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        await this.awsService.dynamoDbDocClient.send(
-            new PutCommand({
-                TableName: this.tasksTableName,
-                Item: task,
-            }),
-        );
-
-        await this.writeActivityLog({
-            taskId: task.taskId,
-            teamId: task.teamId,
-            actorUserId: currentUser.userId,
-            actorName: currentUser.userId,
-            actionType: 'TASK_CREATED',
-            message: `${currentUser.userId} created task ${task.title}`,
-        });
-
-        await this.writeActivityLog({
-            taskId: task.taskId,
-            teamId: task.teamId,
-            actorUserId: currentUser.userId,
-            actorName: currentUser.userId,
-            assigneeId: task.assigneeId,
-            actionType: 'TASK_ASSIGNED',
-            message: `${currentUser.userId} assigned task ${task.title} to ${task.assigneeId}`,
-        });
-        await this.publishTaskAssignment(task, task.assigneeId);
-
-        return task;
+  async createTaskForUser(dto: CreateTaskDto, user: CurrentUser) {
+    if (!this.isManagerOrAdmin(user)) {
+      throw new ForbiddenException('Only managers and admins can create tasks.');
     }
 
-    async findAllForUser(user: CurrentUser, requestedTeamId?: string) {
-        const currentUser = this.normalizeUser(user);
-
-        if (this.isManagerOrAdmin(currentUser)) {
-            if (requestedTeamId) {
-                return this.findByTeamId(requestedTeamId);
-            }
-
-            const result = await this.awsService.dynamoDbDocClient.send(
-                new ScanCommand({
-                    TableName: this.tasksTableName,
-                }),
-            );
-
-            return result.Items || [];
-        }
-
-        if (!currentUser.teamId) {
-            throw new ForbiddenException('Employee does not have a teamId.');
-        }
-
-        if (requestedTeamId && requestedTeamId !== currentUser.teamId) {
-            throw new ForbiddenException("You cannot view another team's tasks.");
-        }
-
-        return this.findByTeamId(currentUser.teamId);
+    if (dto.imageKey && !isValidImageKey(dto.imageKey)) {
+      throw new BadRequestException('imageKey must start with originals/');
     }
 
-    async findOneForUser(taskId: string, user: CurrentUser) {
-        const currentUser = this.normalizeUser(user);
-        const task = await this.getTaskOrThrow(taskId);
+    const now = new Date().toISOString();
+    const taskId = uuidv4();
 
-        if (this.isManagerOrAdmin(currentUser)) {
-            return task;
-        }
+    const task: Record<string, any> = {
+      taskId,
+      title: dto.title,
+      description: dto.description,
+      status: 'To Do',
+      priority: dto.priority,
+      deadline: dto.deadline,
+      assigneeId: dto.assigneeId,
+      teamId: dto.teamId,
+      createdBy: user.userId,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-        if (task.teamId !== currentUser.teamId) {
-            throw new ForbiddenException("You cannot view another team's task.");
-        }
-
-        return task;
+    if (dto.assigneeName) {
+      task.assigneeName = dto.assigneeName;
     }
 
-    private async findByTeamId(teamId: string) {
-        const result = await this.awsService.dynamoDbDocClient.send(
-            new QueryCommand({
-                TableName: this.tasksTableName,
-                IndexName: 'teamId-index',
-                KeyConditionExpression: 'teamId = :teamId',
-                ExpressionAttributeValues: {
-                    ':teamId': teamId,
-                },
-            }),
-        );
-
-        return result.Items || [];
+    if (dto.imageKey) {
+      task.imageKey = dto.imageKey;
+      task.imageHistory = [];
+      await this.processUploadedImage(dto.imageKey);
     }
 
-    async updateStatusForUser(taskId: string, newStatus: string, user: CurrentUser) {
-        const currentUser = this.normalizeUser(user);
-        this.validateStatus(newStatus);
+    await this.awsService.dynamoDbDocClient.send(
+      new PutCommand({
+        TableName: this.tasksTableName,
+        Item: task,
+      }),
+    );
 
-        const task = await this.findOneForUser(taskId, currentUser);
+    const actorName = user.fullName || user.userId;
+    await this.auditLogsService.logActivity({
+      taskId,
+      taskTitle: task.title,
+      teamId: task.teamId,
+      actorUserId: user.userId,
+      actorName,
+      actionType: 'CREATED',
+      message: `${actorName} created task "${task.title}"`,
+    });
 
-        if (!this.isManagerOrAdmin(currentUser) && this.getAssignedUserId(task) !== currentUser.userId) {
-            throw new ForbiddenException('You can update only tasks assigned to you.');
-        }
+    await this.cloudWatchTaskMetrics.recordTaskCreated(task.teamId);
 
-        const oldStatus = task.status;
-        this.validateStatusTransition(oldStatus, newStatus);
+    return this.enrichTaskWithImageUrls(task);
+  }
 
-        const now = new Date().toISOString();
-        const closedAt = newStatus === 'Done' ? now : null;
+  async getTaskHistoryForUser(taskId: string, user: CurrentUser) {
+    const task = await this.getTaskRecord(taskId);
+    if (!this.isManagerOrAdmin(user) && task.teamId !== user.teamId) {
+      throw new ForbiddenException('You cannot view this task history.');
+    }
+    return this.auditLogsService.findByTaskId(
+      taskId,
+      user,
+      task.teamId as string,
+    );
+  }
 
-        await this.awsService.dynamoDbDocClient.send(
-            new UpdateCommand({
-                TableName: this.tasksTableName,
-                Key: {
-                    taskId,
-                },
-                UpdateExpression: 'SET #status = :newStatus, updatedAt = :updatedAt, closedAt = :closedAt',
-                ExpressionAttributeNames: {
-                    '#status': 'status',
-                },
-                ExpressionAttributeValues: {
-                    ':newStatus': newStatus,
-                    ':updatedAt': now,
-                    ':closedAt': closedAt,
-                },
-            }),
-        );
-
-        await this.writeActivityLog({
-            taskId: task.taskId,
-            teamId: task.teamId,
-            actorUserId: currentUser.userId,
-            actorName: currentUser.userId,
-            actionType: 'STATUS_CHANGED',
-            fromStatus: oldStatus,
-            toStatus: newStatus,
-            message: `${currentUser.userId} moved ${task.title} from ${oldStatus} to ${newStatus}`,
-        });
-
-        return {
-            message: 'Task status updated successfully.',
-            taskId,
-            fromStatus: oldStatus,
-            toStatus: newStatus,
-            updatedAt: now,
-            closedAt,
-        };
+  async updateTaskForUser(
+    taskId: string,
+    dto: UpdateTaskDto,
+    user: CurrentUser,
+  ) {
+    if (!this.isManager(user)) {
+      throw new ForbiddenException('Only managers can update tasks.');
     }
 
-    async findHistoryForUser(taskId: string, user: CurrentUser) {
-        await this.findOneForUser(taskId, user);
-        return this.queryActivityLogsByTaskId(taskId);
+    const existing = await this.getTaskRecord(taskId);
+    await this.findOneForUser(taskId, user);
+
+    const now = new Date().toISOString();
+    const updates: Record<string, any> = { ...dto, updatedAt: now };
+    delete updates.clearImage;
+
+    if (dto.clearImage === true) {
+      updates.imageKey = null;
     }
 
-    async updateForUser(taskId: string, body: TaskPayload, user: CurrentUser) {
-        const currentUser = this.normalizeUser(user);
-        this.assertManagerOrAdmin(currentUser);
+    if (dto.imageKey) {
+      if (!isValidImageKey(dto.imageKey)) {
+        throw new BadRequestException('imageKey must start with originals/');
+      }
 
-        const task = await this.getTaskOrThrow(taskId);
-        const updates: Record<string, any> = {};
-
-        for (const field of ALLOWED_UPDATE_FIELDS) {
-            if (body[field] !== undefined) {
-                updates[field] = body[field];
-            }
+      const previousKey = existing.imageKey as string | undefined;
+      if (previousKey && previousKey !== dto.imageKey) {
+        const history = Array.isArray(existing.imageHistory)
+          ? [...existing.imageHistory]
+          : [];
+        if (!history.includes(previousKey)) {
+          history.push(previousKey);
         }
-
-        if (Object.keys(updates).length === 0) {
-            throw new BadRequestException(`At least one allowed field is required: ${ALLOWED_UPDATE_FIELDS.join(', ')}.`);
-        }
-
-        if (updates.priority !== undefined) {
-            this.validatePriority(updates.priority);
-        }
-
-        if (updates.status !== undefined) {
-            this.validateStatus(updates.status);
-            this.validateStatusTransition(task.status, updates.status);
-            updates.closedAt = updates.status === 'Done' ? new Date().toISOString() : null;
-        }
-
-        if (updates.deadline !== undefined) {
-            this.validateDeadline(updates.deadline);
-        }
-
-        if (updates.assigneeId !== undefined || updates.teamId !== undefined) {
-            const targetAssigneeId = updates.assigneeId ?? this.getAssignedUserId(task);
-            const targetTeamId = updates.teamId ?? task.teamId;
-            await this.validateAssigneeBelongsToTeam(targetAssigneeId, targetTeamId);
-        }
-
-        updates.updatedAt = new Date().toISOString();
-
-        const expressionAttributeNames: Record<string, string> = {};
-        const expressionAttributeValues: Record<string, any> = {};
-        const setExpressions: string[] = [];
-
-        Object.entries(updates).forEach(([field, value]) => {
-            expressionAttributeNames[`#${field}`] = field;
-            expressionAttributeValues[`:${field}`] = value;
-            setExpressions.push(`#${field} = :${field}`);
-        });
-
-        const result = await this.awsService.dynamoDbDocClient.send(
-            new UpdateCommand({
-                TableName: this.tasksTableName,
-                Key: {
-                    taskId,
-                },
-                UpdateExpression: `SET ${setExpressions.join(', ')}`,
-                ExpressionAttributeNames: expressionAttributeNames,
-                ExpressionAttributeValues: expressionAttributeValues,
-                ReturnValues: 'ALL_NEW',
-            }),
-        );
-
-        const updatedTask = result.Attributes ?? { ...task, ...updates };
-        const assigneeChanged = updates.assigneeId !== undefined && updates.assigneeId !== task.assigneeId;
-
-        await this.writeActivityLog({
-            taskId,
-            teamId: updatedTask.teamId ?? task.teamId,
-            actorUserId: currentUser.userId,
-            actorName: currentUser.userId,
-            actionType: 'TASK_UPDATED',
-            message: `${currentUser.userId} updated task ${updatedTask.title ?? task.title}`,
-        });
-
-        if (assigneeChanged) {
-            await this.writeActivityLog({
-                taskId,
-                teamId: updatedTask.teamId ?? task.teamId,
-                actorUserId: currentUser.userId,
-                actorName: currentUser.userId,
-                assigneeId: updates.assigneeId,
-                actionType: 'TASK_ASSIGNED',
-                message: `${currentUser.userId} assigned task ${updatedTask.title ?? task.title} to ${updates.assigneeId}`,
-            });
-            await this.publishTaskAssignment(updatedTask, updates.assigneeId);
-        }
-
-        return updatedTask;
+        updates.imageHistory = history;
+      }
+      updates.imageKey = dto.imageKey;
+      await this.processUploadedImage(dto.imageKey);
     }
 
-    async assignForUser(taskId: string, assigneeId: string, user: CurrentUser) {
-        if (!assigneeId) {
-            throw new BadRequestException('assigneeId is required.');
-        }
+    const allowedFields = [
+      'title',
+      'description',
+      'priority',
+      'deadline',
+      'assigneeId',
+      'assigneeName',
+      'teamId',
+      'status',
+      'imageKey',
+      'imageHistory',
+      'updatedAt',
+    ];
 
-        return this.updateForUser(taskId, { assigneeId }, user);
+    const setParts: string[] = [];
+    const names: Record<string, string> = {};
+    const values: Record<string, any> = {};
+
+    for (const field of allowedFields) {
+      if (updates[field] === undefined) continue;
+      const nameKey = `#${field}`;
+      const valueKey = `:${field}`;
+      names[nameKey] = field;
+      values[valueKey] = updates[field];
+      setParts.push(`${nameKey} = ${valueKey}`);
     }
 
-    async deleteForUser(taskId: string, user: CurrentUser) {
-        const currentUser = this.normalizeUser(user);
-        this.assertManagerOrAdmin(currentUser);
-
-        const task = await this.getTaskOrThrow(taskId);
-
-        await this.awsService.dynamoDbDocClient.send(
-            new DeleteCommand({
-                TableName: this.tasksTableName,
-                Key: {
-                    taskId,
-                },
-            }),
-        );
-
-        // Image/S3 cleanup is handled by the image module owner.
-        await this.writeActivityLog({
-            taskId,
-            teamId: task.teamId,
-            actorUserId: currentUser.userId,
-            actorName: currentUser.userId,
-            actionType: 'TASK_DELETED',
-            message: `${currentUser.userId} deleted task ${task.title}`,
-        });
-
-        return {
-            message: 'Task deleted successfully.',
-            taskId,
-        };
+    if (dto.clearImage === true) {
+      setParts.push('imageKey = :emptyImage');
+      values[':emptyImage'] = null;
     }
+
+    if (setParts.length === 0) {
+      return this.enrichTaskWithImageUrls(existing);
+    }
+
+    if (updates.status === 'Done' && existing.status !== 'Done') {
+      setParts.push('closedAt = :closedAt');
+      values[':closedAt'] = now;
+    }
+
+    const result = await this.awsService.dynamoDbDocClient.send(
+      new UpdateCommand({
+        TableName: this.tasksTableName,
+        Key: { taskId },
+        UpdateExpression: `SET ${setParts.join(', ')}`,
+        ExpressionAttributeNames:
+          Object.keys(names).length > 0 ? names : undefined,
+        ExpressionAttributeValues: values,
+        ReturnValues: 'ALL_NEW',
+      }),
+    );
+
+    const updated = result.Attributes || existing;
+    if (updates.status === 'Done' && existing.status !== 'Done') {
+      await this.cloudWatchTaskMetrics.recordTaskClosed(
+        updated.teamId ?? existing.teamId,
+        existing.createdAt,
+        now,
+      );
+    }
+
+    return this.enrichTaskWithImageUrls(updated);
+  }
+
+  async deleteTaskForUser(taskId: string, user: CurrentUser) {
+    if (!this.isManagerOrAdmin(user)) {
+      throw new ForbiddenException('Only managers and admins can delete tasks.');
+    }
+
+    const task = await this.getTaskRecord(taskId);
+
+    const keysToDelete = new Set<string>();
+    if (task.imageKey) {
+      keysToDelete.add(task.imageKey);
+    }
+
+    await this.deleteS3ImagePair(task.imageKey);
+
+    const actorName = user.fullName || user.userId;
+    await this.auditLogsService.logActivity({
+      taskId: task.taskId,
+      taskTitle: task.title,
+      teamId: task.teamId,
+      actorUserId: user.userId,
+      actorName,
+      actionType: 'DELETED',
+      message: `${actorName} deleted task "${task.title}"`,
+    });
+
+    await this.awsService.dynamoDbDocClient.send(
+      new DeleteCommand({
+        TableName: this.tasksTableName,
+        Key: { taskId },
+      }),
+    );
+
+    return {
+      message: 'Task deleted successfully.',
+      taskId,
+      deletedImageKeys: [...keysToDelete],
+    };
+  }
+
+  private async deleteS3ImagePair(imageKey?: string) {
+    if (!imageKey) return;
+
+    const resizedKey = toResizedKey(imageKey);
+
+    await this.awsService.s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: this.originalsBucketName,
+        Key: imageKey,
+      }),
+    );
+
+    try {
+      await this.awsService.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: this.resizedBucketName,
+          Key: resizedKey,
+        }),
+      );
+    } catch {
+      // Thumbnail may not exist yet if Lambda has not run
+    }
+  }
+
+  async updateStatusForUser(
+    taskId: string,
+    newStatus: string,
+    user: CurrentUser,
+  ) {
+    const allowedStatuses = ['To Do', 'In Progress', 'In Review', 'Done'];
+
+    if (!allowedStatuses.includes(newStatus)) {
+      throw new BadRequestException('Invalid task status.');
+    }
+
+    const task = await this.getTaskRecord(taskId);
+
+    if (!this.isManagerOrAdmin(user) && task.teamId !== user.teamId) {
+      throw new ForbiddenException('You cannot update another team’s task.');
+    }
+
+    if (!this.isManagerOrAdmin(user) && task.assigneeId !== user.userId) {
+      throw new ForbiddenException('You can update only tasks assigned to you.');
+    }
+
+    const oldStatus = task.status;
+    const now = new Date().toISOString();
+
+    const expressionAttributeValues: Record<string, any> = {
+      ':newStatus': newStatus,
+      ':updatedAt': now,
+    };
+
+    let updateExpression = 'SET #status = :newStatus, updatedAt = :updatedAt';
+
+    if (newStatus === 'Done') {
+      updateExpression += ', closedAt = :closedAt';
+      expressionAttributeValues[':closedAt'] = now;
+    }
+
+    await this.awsService.dynamoDbDocClient.send(
+      new UpdateCommand({
+        TableName: this.tasksTableName,
+        Key: { taskId },
+        UpdateExpression: updateExpression,
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: expressionAttributeValues,
+      }),
+    );
+
+    const actorName = user.fullName || user.userId;
+
+    await this.auditLogsService.logActivity({
+      taskId: task.taskId,
+      taskTitle: task.title,
+      teamId: task.teamId,
+      actorUserId: user.userId,
+      actorName,
+      actionType: 'STATUS_CHANGED',
+      fromStatus: oldStatus,
+      toStatus: newStatus,
+      message: `${actorName} moved "${task.title}" from ${oldStatus} to ${newStatus}`,
+    });
+
+    if (newStatus === 'Done' && oldStatus !== 'Done') {
+      await this.cloudWatchTaskMetrics.recordTaskClosed(
+        task.teamId,
+        task.createdAt,
+        now,
+      );
+    }
+
+    const updated = await this.getTaskRecord(taskId);
+    return {
+      message: 'Task status updated successfully.',
+      task: await this.enrichTaskWithImageUrls(updated),
+      taskId,
+      fromStatus: oldStatus,
+      toStatus: newStatus,
+      updatedAt: now,
+    };
+  }
 }
