@@ -20,6 +20,34 @@ export class ApiRequestError extends Error {
   }
 }
 
+function getApiErrorMessage(data: unknown, status: number): string {
+  if (data && typeof data === 'object' && 'message' in data) {
+    const candidate = (data as { message?: unknown }).message;
+
+    if (typeof candidate === 'string') {
+      return candidate;
+    }
+
+    if (Array.isArray(candidate)) {
+      return candidate.join(', ');
+    }
+  }
+
+  return `Request failed with status ${status}`;
+}
+
+function toApiError(data: unknown): ApiError | null {
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  if (!('message' in data) || !('error' in data) || !('statusCode' in data)) {
+    return null;
+  }
+
+  return data as ApiError;
+}
+
 // Token storage removed to prefer HttpOnly cookie-based sessions.
 // The backend should set cookies; the client will send them via `credentials: 'include'`.
 
@@ -56,7 +84,7 @@ async function request<T>(
     return undefined as unknown as T;
   }
 
-  let data: any;
+  let data: unknown = null;
   try {
     data = await res.json();
   } catch {
@@ -64,13 +92,7 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const errMsg =
-      typeof data?.message === 'string'
-        ? data.message
-        : Array.isArray(data?.message)
-          ? data.message.join(', ')
-          : `Request failed with status ${res.status}`;
-    throw new ApiRequestError(errMsg, res.status, data);
+    throw new ApiRequestError(getApiErrorMessage(data, res.status), res.status, toApiError(data));
   }
 
   return data as T;

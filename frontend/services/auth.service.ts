@@ -1,4 +1,5 @@
 import api from './api';
+import { fetchCurrentUser } from '@/features/api';
 import type { LoginDto, LoginResponse, CreateUserDto } from '@/types';
 
 export const authService = {
@@ -8,7 +9,7 @@ export const authService = {
 
   /** Fetch current session/profile when using cookie-based auth */
   getSession: () =>
-    api.get<{ user: any }>('/auth/me'),
+    fetchCurrentUser(),
 
   /** Sign out all Cognito sessions globally */
   logout: () =>

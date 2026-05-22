@@ -9,8 +9,9 @@ import React, {
   useMemo,
 } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import type { Session, AppMode, UserRole } from '@/types';
-import { authService, ApiRequestError, MOCK_USERS } from '@/services';
+import type { Session, AppMode, UserRole, UserProfile } from '@/types';
+import { authService, MOCK_USERS } from '@/services';
+import { clearStoredUserSession, logoutUserSession, mapCurrentUserToSession } from '@/features/utils';
 
 // ─────────────────────────────────────────────────────────────
 //  Context Shape
@@ -38,6 +39,7 @@ interface AuthContextValue {
   switchUser: (userId: string) => void;   // dev-sandbox quick-switch
   setMode: (m: AppMode) => void;
   setTheme: (t: 'dark' | 'light') => void;
+  refreshSession: () => Promise<void>;
   theme: 'dark' | 'light';
 }
 
@@ -59,7 +61,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [mode, setModeState] = useState<AppMode>('mock');
   const [theme, setThemeState] = useState<'dark' | 'light'>('dark');
-  const [customUsers, setCustomUsers] = useState<any[]>([]);
+  const [customUsers, setCustomUsers] = useState<UserProfile[]>([]);
+  const allUsers = useMemo(() => [...MOCK_USERS, ...customUsers], [customUsers]);
 
   // Cookie helpers for theme persistence (plain cookie, not HttpOnly)
   const readCookie = (name: string) => {
@@ -82,16 +85,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Always try server-side cookie session first
         try {
           const res = await authService.getSession();
-          if (res?.user && mounted) {
-            const u = res.user;
-            const s: Session = {
-              userId: u.sub,
-              name: u.fullName || (u.email || '').split('@')[0],
-              email: u.email,
-              role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-              teamId: u.team || '',
-              mode: 'api',
-            };
+          if (res && mounted) {
+            const s = mapCurrentUserToSession(res);
             setModeState('api');
             setSession(s);
           }
@@ -148,6 +143,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.team || '',
+      profile: {
+        userId: u.sub || `user-${Date.now()}`,
+        name: u.fullName || email.split('@')[0],
+        email: u.email || email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.team || '',
+        fullName: u.fullName || email.split('@')[0],
+      },
       mode: 'api',
     };
     setModeState('api');
@@ -155,22 +158,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/dashboard');
   }, [persist, router]);
 
+  const refreshSession = useCallback(async () => {
+    try {
+      const res = await authService.getSession();
+      if (!res) {
+        setSession(null);
+        return;
+      }
+
+      setModeState('api');
+      setSession(mapCurrentUserToSession(res));
+    } catch {
+      setSession(null);
+    }
+  }, []);
+
   // ── Mock Login ──────────────────────────────────────────────
   const loginMock = useCallback((userId: string) => {
-    const allUsers = [...MOCK_USERS, ...customUsers];
-    const u = allUsers.find((x: any) => x.userId === userId) || MOCK_USERS[0];
+    const u = allUsers.find((user) => user.userId === userId) || MOCK_USERS[0];
     const s: Session = {
       userId: u.userId,
       name: u.name || u.fullName || 'User',
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.teamId || '',
+      profile: {
+        userId: u.userId,
+        name: u.name || u.fullName || 'User',
+        email: u.email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.teamId || '',
+        fullName: u.fullName || u.name || 'User',
+      },
       mode: 'mock',
     };
     setModeState('mock');
     persist(s);
     router.push('/dashboard');
-  }, [persist, router]);
+  }, [allUsers, persist, router]);
 
   // ── Register ────────────────────────────────────────────────
   const register = useCallback(
@@ -186,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         router.push('/login');
       } else {
         // Mock register
-        const newUser = {
+        const newUser: UserProfile = {
           userId: `user-${Date.now()}`,
           name: opts.fullName,
           fullName: opts.fullName,
@@ -202,6 +227,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: newUser.email,
           role: newUser.role,
           teamId: newUser.teamId,
+          profile: {
+            userId: newUser.userId,
+            name: newUser.name,
+            email: newUser.email,
+            role: newUser.role,
+            teamId: newUser.teamId,
+            fullName: newUser.fullName,
+          },
           mode: 'mock',
         };
         persist(s);
@@ -214,7 +247,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Logout ──────────────────────────────────────────────────
   const logout = useCallback(() => {
     if (mode === 'api') {
-      authService.logout().catch(() => { /* best effort */ });
+      void logoutUserSession(async () => {
+        await authService.logout();
+      });
+    } else {
+      clearStoredUserSession();
     }
     setSession(null);
     router.push('/login');
@@ -222,8 +259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Quick-Switch (dev sandbox) ──────────────────────────────
   const switchUser = useCallback((userId: string) => {
-    const allUsers = [...MOCK_USERS, ...customUsers];
-    const u = allUsers.find((x: any) => x.userId === userId);
+    const u = allUsers.find((user) => user.userId === userId);
     if (!u) return;
     const s: Session = {
       userId: u.userId,
@@ -231,10 +267,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.teamId || '',
+      profile: {
+        userId: u.userId,
+        name: u.name || u.fullName || 'User',
+        email: u.email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.teamId || '',
+        fullName: u.fullName || u.name || 'User',
+      },
       mode: session?.mode || 'mock',
     };
     persist(s);
-  }, [persist, session]);
+  }, [allUsers, persist, session]);
 
   const setMode = useCallback((m: AppMode) => {
     setModeState(m);
@@ -270,9 +314,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       switchUser,
       setMode,
       setTheme,
+      refreshSession,
       theme,
     };
-  }, [session, isLoading, mode, theme, loginApi, loginMock, register, logout, switchUser, setMode, setTheme]);
+  }, [session, isLoading, mode, theme, loginApi, loginMock, register, logout, switchUser, setMode, setTheme, refreshSession]);
 
   return (
     <AuthContext.Provider value={value}>
