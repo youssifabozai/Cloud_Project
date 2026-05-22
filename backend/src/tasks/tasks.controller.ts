@@ -30,6 +30,11 @@ export class TasksController {
     return this.tasksService.findOneForUser(taskId, req.user);
   }
 
+  @Get(':taskId/history')
+  history(@Param('taskId') taskId: string, @Req() req: any) {
+    return this.tasksService.findHistoryForUser(taskId, req.user);
+  }
+
   @Patch(':taskId/status')
   updateStatus(
     @Param('taskId') taskId: string,

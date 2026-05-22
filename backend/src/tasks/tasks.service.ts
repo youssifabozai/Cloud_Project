@@ -36,6 +36,7 @@ const ALLOWED_PRIORITIES = ['Low', 'Medium', 'High'];
 const REQUIRED_CREATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'assigneeId', 'teamId'];
 const ALLOWED_CREATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'assigneeId', 'teamId', 'projectId'];
 const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'priority', 'deadline', 'teamId', 'assigneeId', 'projectId', 'status'];
+const STATUS_SEQUENCE = ['To Do', 'In Progress', 'In Review', 'Done'];
 
 @Injectable()
 export class TasksService {
@@ -94,6 +95,24 @@ export class TasksService {
         if (!ALLOWED_STATUSES.includes(status)) {
             throw new BadRequestException(
                 `Invalid task status. Must be one of: ${ALLOWED_STATUSES.join(', ')}.`,
+            );
+        }
+    }
+
+    private validateStatusTransition(currentStatus: string, newStatus: string) {
+        this.validateStatus(currentStatus);
+        this.validateStatus(newStatus);
+
+        if (currentStatus === newStatus) {
+            throw new BadRequestException(`Task is already in status ${newStatus}.`);
+        }
+
+        const currentIndex = STATUS_SEQUENCE.indexOf(currentStatus);
+        const nextIndex = STATUS_SEQUENCE.indexOf(newStatus);
+
+        if (nextIndex !== currentIndex + 1) {
+            throw new BadRequestException(
+                `Invalid status transition from ${currentStatus} to ${newStatus}. Allowed flow is: ${STATUS_SEQUENCE.join(' -> ')}.`,
             );
         }
     }
@@ -207,6 +226,44 @@ export class TasksService {
                 },
             }),
         );
+    }
+
+    private sortLogsByCreatedAt(logs: Record<string, any>[]) {
+        return logs.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+    }
+
+    private async queryActivityLogsByTaskId(taskId: string) {
+        try {
+            const result = await this.awsService.dynamoDbDocClient.send(
+                new QueryCommand({
+                    TableName: this.activityLogTableName,
+                    IndexName: 'taskId-index',
+                    KeyConditionExpression: 'taskId = :taskId',
+                    ExpressionAttributeValues: {
+                        ':taskId': taskId,
+                    },
+                }),
+            );
+
+            return this.sortLogsByCreatedAt(result.Items ?? []);
+        } catch (error: any) {
+            if (error.name !== 'ValidationException') {
+                throw error;
+            }
+
+            this.logger.warn('taskId-index is missing on ActivityLog; falling back to Scan for task history.');
+            const result = await this.awsService.dynamoDbDocClient.send(
+                new ScanCommand({
+                    TableName: this.activityLogTableName,
+                    FilterExpression: 'taskId = :taskId',
+                    ExpressionAttributeValues: {
+                        ':taskId': taskId,
+                    },
+                }),
+            );
+
+            return this.sortLogsByCreatedAt(result.Items ?? []);
+        }
     }
 
     private async publishTaskAssignment(task: Record<string, any>, assigneeId: string) {
@@ -349,6 +406,8 @@ export class TasksService {
         }
 
         const oldStatus = task.status;
+        this.validateStatusTransition(oldStatus, newStatus);
+
         const now = new Date().toISOString();
         const closedAt = newStatus === 'Done' ? now : null;
 
@@ -391,6 +450,11 @@ export class TasksService {
         };
     }
 
+    async findHistoryForUser(taskId: string, user: CurrentUser) {
+        await this.findOneForUser(taskId, user);
+        return this.queryActivityLogsByTaskId(taskId);
+    }
+
     async updateForUser(taskId: string, body: TaskPayload, user: CurrentUser) {
         const currentUser = this.normalizeUser(user);
         this.assertManagerOrAdmin(currentUser);
@@ -414,6 +478,7 @@ export class TasksService {
 
         if (updates.status !== undefined) {
             this.validateStatus(updates.status);
+            this.validateStatusTransition(task.status, updates.status);
             updates.closedAt = updates.status === 'Done' ? new Date().toISOString() : null;
         }
 
