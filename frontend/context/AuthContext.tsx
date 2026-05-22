@@ -10,7 +10,8 @@ import React, {
 } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import type { Session, AppMode, UserRole } from '@/types';
-import { authService, ApiRequestError, MOCK_USERS } from '@/services';
+import { authService, MOCK_USERS } from '@/services';
+import { clearStoredUserSession, logoutUserSession, mapCurrentUserToSession } from '@/features/utils';
 
 // ─────────────────────────────────────────────────────────────
 //  Context Shape
@@ -82,16 +83,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Always try server-side cookie session first
         try {
           const res = await authService.getSession();
-          if (res?.user && mounted) {
-            const u = res.user;
-            const s: Session = {
-              userId: u.sub,
-              name: u.fullName || (u.email || '').split('@')[0],
-              email: u.email,
-              role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-              teamId: u.team || '',
-              mode: 'api',
-            };
+          if (res && mounted) {
+            const s = mapCurrentUserToSession(res);
             setModeState('api');
             setSession(s);
           }
@@ -148,6 +141,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.team || '',
+      profile: {
+        userId: u.sub || `user-${Date.now()}`,
+        name: u.fullName || email.split('@')[0],
+        email: u.email || email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.team || '',
+        fullName: u.fullName || email.split('@')[0],
+      },
       mode: 'api',
     };
     setModeState('api');
@@ -165,6 +166,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.teamId || '',
+      profile: {
+        userId: u.userId,
+        name: u.name || u.fullName || 'User',
+        email: u.email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.teamId || '',
+        fullName: u.fullName || u.name || 'User',
+      },
       mode: 'mock',
     };
     setModeState('mock');
@@ -202,6 +211,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: newUser.email,
           role: newUser.role,
           teamId: newUser.teamId,
+          profile: {
+            userId: newUser.userId,
+            name: newUser.name,
+            email: newUser.email,
+            role: newUser.role,
+            teamId: newUser.teamId,
+            fullName: newUser.fullName,
+          },
           mode: 'mock',
         };
         persist(s);
@@ -214,7 +231,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Logout ──────────────────────────────────────────────────
   const logout = useCallback(() => {
     if (mode === 'api') {
-      authService.logout().catch(() => { /* best effort */ });
+      void logoutUserSession(async () => {
+        await authService.logout();
+      });
+    } else {
+      clearStoredUserSession();
     }
     setSession(null);
     router.push('/login');
@@ -231,6 +252,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: u.email,
       role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
       teamId: u.teamId || '',
+      profile: {
+        userId: u.userId,
+        name: u.name || u.fullName || 'User',
+        email: u.email,
+        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
+        teamId: u.teamId || '',
+        fullName: u.fullName || u.name || 'User',
+      },
       mode: session?.mode || 'mock',
     };
     persist(s);

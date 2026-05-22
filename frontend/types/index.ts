@@ -18,6 +18,7 @@ export interface Session {
   teamId:       string;          // empty string for Manager/Admin
   accessToken?: string;
   idToken?:     string;
+  profile?:     UserProfile;
   mode:         AppMode;
 }
 
