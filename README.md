@@ -8,6 +8,12 @@ This project is a lightweight team task-management web application (similar to J
 
 The system uses an event-driven architecture with AWS services (SNS, SQS, EventBridge), a Lambda-based image pipeline, and CloudWatch dashboards for monitoring. It is designed for high availability, deployed across at least two Availability Zones behind an Application Load Balancer and CloudFront.
 
+## Architecture Diagram
+
+Below is the detailed AWS architecture diagram showing the high-availability setup across two Availability Zones, using official AWS service icons.
+
+> **Interactive Version:** Open [`mini_jira_aws_architecture.html`](./mini_jira_aws_architecture.html) in your browser for an interactive, zoomable version of this diagram.
+
 ## Deliverables
 
 - **Architecture Diagram:** `[Insert link or image to the detailed AWS architecture diagram here]`
