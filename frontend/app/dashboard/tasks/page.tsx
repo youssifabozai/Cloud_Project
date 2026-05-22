@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -18,8 +19,9 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { EmptyState, LoadingState, Modal } from '@/features/components';
+import { commentsService } from '@/services/comments.service';
 import { tasksService } from '@/services/tasks.service';
-import type { TaskStatus } from '@/types';
+import type { Comment, TaskStatus } from '@/types';
 
 type TaskPriority = 'Low' | 'Medium' | 'High';
 
@@ -68,6 +70,25 @@ function formatDate(value?: string | null) {
   });
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return 'No date';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function priorityClass(priority?: string) {
   if (priority === 'High') {
     return 'border-red-500/25 bg-red-500/10 text-red-600';
@@ -85,7 +106,12 @@ export default function TasksBoardPage() {
   const { pushToast } = useToast();
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [selectedTask, setSelectedTask] = useState<TaskRecord | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [areCommentsLoading, setAreCommentsLoading] = useState(false);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isUpdatingTaskId, setIsUpdatingTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,13 +149,47 @@ export default function TasksBoardPage() {
     });
   }, [tasks]);
 
+  const loadComments = useCallback(async (taskId: string) => {
+    setAreCommentsLoading(true);
+    setCommentsError(null);
+
+    try {
+      const nextComments = await commentsService.getByTaskId(taskId);
+      setComments(
+        [...nextComments].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        ),
+      );
+    } catch (requestError) {
+      const message = errorMessage(requestError);
+      setComments([]);
+      setCommentsError(message);
+      pushToast('error', 'Comments unavailable', message);
+    } finally {
+      setAreCommentsLoading(false);
+    }
+  }, [pushToast]);
+
   const openTask = async (task: TaskRecord) => {
+    setSelectedTask(task);
+    setComments([]);
+    setCommentDraft('');
+    setCommentsError(null);
+
     try {
       const freshTask = await tasksService.getById(task.taskId);
       setSelectedTask(freshTask as TaskRecord);
+      void loadComments(task.taskId);
     } catch (requestError) {
       pushToast('error', 'Task details unavailable', errorMessage(requestError));
     }
+  };
+
+  const closeTask = () => {
+    setSelectedTask(null);
+    setComments([]);
+    setCommentDraft('');
+    setCommentsError(null);
   };
 
   const updateStatus = async (task: TaskRecord, status: TaskStatus) => {
@@ -152,6 +212,36 @@ export default function TasksBoardPage() {
       pushToast('error', 'Status update failed', errorMessage(requestError));
     } finally {
       setIsUpdatingTaskId(null);
+    }
+  };
+
+  const submitComment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const text = commentDraft.trim();
+    if (!selectedTask || !text) {
+      return;
+    }
+
+    setIsSubmittingComment(true);
+
+    try {
+      const createdComment = await commentsService.create({
+        taskId: selectedTask.taskId,
+        text,
+      });
+
+      setComments((current) =>
+        [...current, createdComment].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        ),
+      );
+      setCommentDraft('');
+      pushToast('success', 'Comment added', 'Your comment was saved.');
+    } catch (requestError) {
+      pushToast('error', 'Comment failed', errorMessage(requestError));
+    } finally {
+      setIsSubmittingComment(false);
     }
   };
 
@@ -291,7 +381,7 @@ export default function TasksBoardPage() {
         open={Boolean(selectedTask)}
         title={selectedTask?.title ?? 'Task details'}
         description={selectedTask ? `${selectedTask.status} - ${selectedTask.teamId}` : undefined}
-        onClose={() => setSelectedTask(null)}
+        onClose={closeTask}
         maxWidthClassName="max-w-3xl"
       >
         {selectedTask && (
@@ -304,14 +394,84 @@ export default function TasksBoardPage() {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-dashed border-[var(--border-color)] bg-[var(--bg-secondary)]/70 p-5">
-                <div className="flex items-center gap-2 text-sm font-bold">
-                  <MessageSquare className="h-4 w-4 text-[var(--primary)]" />
-                  Comments
+              <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/70 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-bold">
+                    <MessageSquare className="h-4 w-4 text-[var(--primary)]" />
+                    Comments
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadComments(selectedTask.taskId)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--primary)]"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Refresh
+                  </button>
                 </div>
-                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                  Comments are ready for this modal, but no frontend comments service or backend comments route is currently available in the inspected code. This panel will stay empty until that API is connected.
-                </p>
+
+                <div className="mt-4">
+                  {areCommentsLoading ? (
+                    <LoadingState title="Loading comments" description="Fetching the task discussion." />
+                  ) : commentsError ? (
+                    <EmptyState
+                      title="Comments could not be loaded"
+                      description={commentsError}
+                      icon={<AlertTriangle className="h-6 w-6" />}
+                      primaryAction={{ label: 'Retry', onClick: () => void loadComments(selectedTask.taskId) }}
+                    />
+                  ) : comments.length === 0 ? (
+                    <EmptyState
+                      title="No comments yet"
+                      description="Start the task discussion with the first comment."
+                      icon={<MessageSquare className="h-6 w-6" />}
+                    />
+                  ) : (
+                    <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
+                      {comments.map((comment) => (
+                        <article
+                          key={comment.commentId}
+                          className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)] p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-bold">{comment.authorName || comment.authorId || 'Unknown user'}</span>
+                            <time className="text-xs font-semibold text-[var(--text-secondary)]">
+                              {formatDateTime(comment.createdAt)}
+                            </time>
+                          </div>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
+                            {comment.text}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <form onSubmit={submitComment} className="mt-4 space-y-3">
+                  <label className="grid gap-2 text-sm font-semibold">
+                    Add comment
+                    <textarea
+                      value={commentDraft}
+                      onChange={(event) => setCommentDraft(event.target.value)}
+                      className="min-h-24 rounded-xl border border-[var(--border-color)] bg-[var(--bg-primary)] px-4 py-3 text-sm outline-none transition focus:border-[var(--primary)]"
+                      placeholder="Write a comment..."
+                      maxLength={4000}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingComment || !commentDraft.trim()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-bold text-white shadow-premium transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSubmittingComment ? (
+                      <Clock3 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MessageSquare className="h-4 w-4" />
+                    )}
+                    {isSubmittingComment ? 'Posting' : 'Post comment'}
+                  </button>
+                </form>
               </div>
             </section>
 
@@ -345,7 +505,7 @@ export default function TasksBoardPage() {
 
               <button
                 type="button"
-                onClick={() => setSelectedTask(null)}
+                onClick={closeTask}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-xs font-bold"
               >
                 <X className="h-3.5 w-3.5" />
