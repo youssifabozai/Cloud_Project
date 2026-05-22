@@ -1,17 +1,22 @@
 import {
+    BadRequestException,
     ForbiddenException,
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+    DeleteCommand,
     GetCommand,
     PutCommand,
     QueryCommand,
     ScanCommand,
     UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AwsService } from '../AWS/aws.service';
+import { v4 as uuidv4 } from 'uuid';
 
 
 type CurrentUser = {
@@ -24,6 +29,8 @@ type CurrentUser = {
 export class TasksService {
     private readonly tasksTableName: string;
     private readonly activityLogTableName: string;
+    private readonly originalsBucketName: string;
+    private readonly resizedBucketName: string;
 
     constructor(
         private readonly awsService: AwsService,
@@ -34,6 +41,10 @@ export class TasksService {
         this.activityLogTableName =
             this.configService.get<string>('ACTIVITY_LOG_TABLE_NAME') ||
             'mini-jira-ActivityLog';
+        this.originalsBucketName =
+            this.configService.get<string>('ORIGINAL_IMAGES_BUCKET') || 'original-images';
+        this.resizedBucketName =
+            this.configService.get<string>('RESIZED_IMAGES_BUCKET') || 'resized-images';
     }
 
     private isManager(user: CurrentUser): boolean {
@@ -113,6 +124,131 @@ export class TasksService {
         );
 
         return result.Items || [];
+    }
+    async generateUploadUrl(fileName: string, contentType: string) {
+        if (!fileName) {
+            throw new BadRequestException('fileName is required.');
+        }
+
+        if (!contentType) {
+            throw new BadRequestException('contentType is required.');
+        }
+
+        const key = `originals/${uuidv4()}-${fileName}`;
+        const command = new PutObjectCommand({
+            Bucket: this.originalsBucketName,
+            Key: key,
+            ContentType: contentType,
+        });
+
+        const uploadUrl = await getSignedUrl(this.awsService.s3Client, command, {
+            expiresIn: 900,
+        });
+
+        return {
+            uploadUrl,
+            key,
+        };
+    }
+
+    async createTaskForUser(payload: Record<string, any>, user: CurrentUser) {
+        if (!this.isManager(user)) {
+            throw new ForbiddenException('Only managers can create tasks.');
+        }
+
+        const now = new Date().toISOString();
+        const taskId = uuidv4();
+
+        const task = {
+            taskId,
+            ...payload,
+            createdAt: now,
+            updatedAt: now,
+        };
+
+        await this.awsService.dynamoDbDocClient.send(
+            new PutCommand({
+                TableName: this.tasksTableName,
+                Item: task,
+            }),
+        );
+
+        return task;
+    }
+
+    async updateTaskForUser(taskId: string, payload: Record<string, any>, user: CurrentUser) {
+        if (!this.isManager(user)) {
+            throw new ForbiddenException('Only managers can update tasks.');
+        }
+
+        await this.findOneForUser(taskId, user);
+
+        const now = new Date().toISOString();
+        const updateExpressionParts: string[] = [];
+        const expressionAttributeValues: Record<string, any> = {
+            ':updatedAt': now,
+        };
+
+        for (const [key, value] of Object.entries(payload)) {
+            updateExpressionParts.push(`${key} = :${key}`);
+            expressionAttributeValues[`:${key}`] = value;
+        }
+
+        if (updateExpressionParts.length === 0) {
+            return this.findOneForUser(taskId, user);
+        }
+
+        const result = await this.awsService.dynamoDbDocClient.send(
+            new UpdateCommand({
+                TableName: this.tasksTableName,
+                Key: { taskId },
+                UpdateExpression: `SET ${updateExpressionParts.join(', ')}, updatedAt = :updatedAt`,
+                ExpressionAttributeValues: expressionAttributeValues,
+                ReturnValues: 'ALL_NEW',
+            }),
+        );
+
+        return result.Attributes;
+    }
+
+    async deleteTaskForUser(taskId: string, user: CurrentUser) {
+        if (!this.isManager(user)) {
+            throw new ForbiddenException('Only managers can delete tasks.');
+        }
+
+        const task = await this.findOneForUser(taskId, user);
+
+        if (task?.imageKey) {
+            const resizedKey = task.imageKey.startsWith('originals/')
+                ? task.imageKey.replace(/^originals\//, 'resized/')
+                : `resized/${task.imageKey}`;
+
+            await this.awsService.s3Client.send(
+                new DeleteObjectCommand({
+                    Bucket: this.originalsBucketName,
+                    Key: task.imageKey,
+                }),
+            );
+
+            await this.awsService.s3Client.send(
+                new DeleteObjectCommand({
+                    Bucket: this.resizedBucketName,
+                    Key: resizedKey,
+                }),
+            );
+        }
+
+        await this.awsService.dynamoDbDocClient.send(
+            new DeleteCommand({
+                TableName: this.tasksTableName,
+                Key: { taskId },
+            }),
+        );
+
+        return {
+            message: 'Task deleted successfully.',
+            taskId,
+        };
     }
 
     async updateStatusForUser(taskId: string, newStatus: string, user: CurrentUser) {
