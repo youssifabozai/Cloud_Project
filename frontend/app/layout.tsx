@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mini-Jira — AWS Cloud Task Workspace",
-  description: "Ultra-premium, high-availability, and team-isolated task management system built on AWS.",
+  title: "CloudJira - AWS Cloud Task Workspace",
+  description: "A soft cloud themed task management workspace built around AWS services.",
 };
 
 export default function RootLayout({
@@ -24,14 +24,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <AuthProvider>
-          {children}
-        </AuthProvider>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

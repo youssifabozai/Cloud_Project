@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from "next/navigation";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   KanbanSquare,
   LayoutDashboard,
@@ -21,8 +22,6 @@ import {
   TrendingUp,
   Shield,
   Layers,
-  Sun,
-  Moon,
   Upload,
   Sparkles,
   Info,
@@ -435,22 +434,22 @@ export default function DashboardPage() {
   const isUserLeader = currentUser.role === "Manager" || currentUser.role === "Admin" || currentUser.role === "ADMIN" || currentUser.role === "MANAGER";
 
   return (
-    <div className="flex min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] transition-all duration-300">
+    <div className="cloud-page flex min-h-screen text-[#202633] transition-all duration-300">
 
       {/* 1. LEFT SIDEBAR */}
-      <aside className="w-64 border-r border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col justify-between py-6 px-4 hidden md:flex">
+      <aside className="cloud-card m-4 w-64 rounded-[28px] flex flex-col justify-between py-6 px-4 hidden md:flex">
         <div className="flex flex-col gap-8">
           {/* Logo Header */}
           <div className="flex items-center gap-3 px-2">
-            <div className="p-2.5 rounded-xl bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white shadow-premium">
+            <div className="cloud-logo p-2.5 rounded-xl text-white shadow-premium">
               <Layers className="h-6 w-6" />
             </div>
             <div>
               <h1 className="font-bold text-lg tracking-tight flex items-center gap-1.5">
-                Mini-Jira
-                <span className="text-[10px] font-medium py-0.5 px-1.5 bg-blue-500/10 text-blue-500 rounded-full border border-blue-500/20">AWS</span>
+                CloudJira
+                <span className="text-[10px] font-medium py-0.5 px-1.5 bg-white/50 text-[#A21BF4] rounded-full border border-white/70">AWS</span>
               </h1>
-              <p className="text-xs text-[var(--text-secondary)]">Cloud Workspace</p>
+              <p className="text-xs text-[#475569]">Cloud Workspace</p>
             </div>
           </div>
 
@@ -459,8 +458,8 @@ export default function DashboardPage() {
             <button
               onClick={() => setActiveTab('dashboard')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'dashboard'
-                ? 'bg-blue-500/10 text-[var(--primary)] shadow-sm'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/30 hover:text-[var(--text-primary)]'
+                ? 'bg-white/54 text-[#A21BF4] shadow-sm'
+                : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
                 }`}
             >
               <LayoutDashboard className="h-4 w-4" />
@@ -469,8 +468,8 @@ export default function DashboardPage() {
             <button
               onClick={() => setActiveTab('board')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'board'
-                ? 'bg-blue-500/10 text-[var(--primary)] shadow-sm'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/30 hover:text-[var(--text-primary)]'
+                ? 'bg-white/54 text-[#A21BF4] shadow-sm'
+                : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
                 }`}
             >
               <KanbanSquare className="h-4 w-4" />
@@ -479,8 +478,8 @@ export default function DashboardPage() {
             <button
               onClick={() => setActiveTab('projects')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'projects'
-                ? 'bg-blue-500/10 text-[var(--primary)] shadow-sm'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/30 hover:text-[var(--text-primary)]'
+                ? 'bg-white/54 text-[#A21BF4] shadow-sm'
+                : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
                 }`}
             >
               <FolderKanban className="h-4 w-4" />
@@ -489,8 +488,8 @@ export default function DashboardPage() {
             <button
               onClick={() => setActiveTab('teams')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'teams'
-                ? 'bg-blue-500/10 text-[var(--primary)] shadow-sm'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/30 hover:text-[var(--text-primary)]'
+                ? 'bg-white/54 text-[#A21BF4] shadow-sm'
+                : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
                 }`}
             >
               <Users2 className="h-4 w-4" />
@@ -499,8 +498,8 @@ export default function DashboardPage() {
             <button
               onClick={() => setActiveTab('activity')}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === 'activity'
-                ? 'bg-blue-500/10 text-[var(--primary)] shadow-sm'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/30 hover:text-[var(--text-primary)]'
+                ? 'bg-white/54 text-[#A21BF4] shadow-sm'
+                : 'text-[#475569] hover:bg-white/36 hover:text-[#202633]'
                 }`}
             >
               <Activity className="h-4 w-4" />
@@ -513,7 +512,7 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-4 border-t border-[var(--border-color)] pt-4">
           {/* Active user status */}
           <div className="flex items-center gap-3 px-1">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold relative shadow-md">
+            <div className="cloud-logo h-10 w-10 rounded-full text-white flex items-center justify-center font-bold relative shadow-md">
               {currentUser.name.charAt(0)}
               <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border-2 border-[var(--bg-secondary)]"></span>
             </div>
@@ -525,14 +524,12 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between px-1">
-            <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="p-2 rounded-lg hover:bg-[var(--border-color)]/40 transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              title="Toggle Light/Dark Theme"
-            >
-              {theme === 'dark' ? <Sun className="h-4.5 w-4.5 text-amber-400" /> : <Moon className="h-4.5 w-4.5 text-zinc-600" />}
-            </button>
+          <div className="flex items-center justify-between gap-3 px-1">
+            <ThemeToggle
+              theme={theme}
+              onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="scale-[0.72] origin-left"
+            />
 
             <button
               onClick={handleSignOut}
@@ -549,16 +546,16 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0">
 
         {/* 2. TOP NAVBAR */}
-        <header className="h-16 border-b border-[var(--border-color)] bg-[var(--bg-secondary)]/80 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-6">
+        <header className="cloud-nav m-4 mb-0 h-16 rounded-[24px] sticky top-4 z-30 flex items-center justify-between px-6">
           <div className="flex items-center gap-4 flex-1">
             <h2 className="text-lg font-bold capitalize hidden sm:block">
               {activeTab === 'dashboard' ? 'Overview Analytics' : activeTab === 'board' ? 'Kanban Taskboard' : activeTab}
             </h2>
 
             {/* Quick Demo User Switcher */}
-            <div className="flex items-center gap-2 bg-[var(--bg-primary)] px-2.5 py-1 rounded-full border border-[var(--border-color)]">
-              <Shield className="h-3.5 w-3.5 text-blue-500" />
-              <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Demopage Switcher:</span>
+            <div className="flex items-center gap-2 bg-white/42 px-2.5 py-1 rounded-full border border-white/70">
+              <Shield className="h-3.5 w-3.5 text-[#A21BF4]" />
+              <span className="text-[11px] font-semibold text-[#475569]">Demo Switcher:</span>
               <select
                 value={currentUser?.userId}
                 onChange={(e) => {
@@ -569,7 +566,7 @@ export default function DashboardPage() {
                     setCurrentUser(selected);
                   }
                 }}
-                className="bg-transparent text-[11px] font-bold text-blue-500 focus:outline-none cursor-pointer border-none"
+                className="bg-transparent text-[11px] font-bold text-[#A21BF4] focus:outline-none cursor-pointer border-none"
               >
                 {userList.map((u) => (
                   <option key={u.userId} value={u.userId}>
@@ -589,7 +586,7 @@ export default function DashboardPage() {
                 placeholder="Search assignments..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-4 py-1.5 w-60 rounded-full border border-[var(--border-color)] bg-[var(--bg-primary)] text-xs placeholder-[var(--text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] transition-all"
+                className="pl-9 pr-4 py-2 w-60 rounded-full border border-white/70 bg-white/42 text-xs placeholder-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#C832FF]/30 transition-all"
               />
             </div>
 
@@ -609,7 +606,7 @@ export default function DashboardPage() {
         </header>
 
         {/* 3. CONTENT AREA */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="max-w-7xl mx-auto flex flex-col gap-6 animate-fade-in">
 
             {/* Employee Team Isolation Notice */}
