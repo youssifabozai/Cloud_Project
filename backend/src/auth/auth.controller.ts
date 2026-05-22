@@ -15,6 +15,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { UsersService } from '../users/users.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/decorators/roles.decorator';
+import { RegisterDto } from './dto/register.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -59,20 +60,14 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  async register(
-    @Body()
-    body: {
-      email: string;
-      password: string;
-      fullName: string;
-      team?: string;
-    },
-  ) {
-    if (!body?.email || !body?.password || !body?.fullName) {
-      throw new BadRequestException('email, password, and fullName are required');
-    }
-
-    const createdUser = await this.authService.registerPublicUser(body);
+  async register(@Body() body: RegisterDto) {
+    const createdUser = await this.authService.registerPublicUser({
+      email: body.email,
+      password: body.password,
+      fullName: body.fullName,
+      role: body.role,
+      team: body.team,
+    });
 
     return {
       success: true,

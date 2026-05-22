@@ -11,3 +11,4 @@ export * from './toast-stack';
 export * from './change-role-modal';
 export * from './destructive-confirm-dialog';
 export * from './delete-user-dialog';
+export * from './task-image-upload';

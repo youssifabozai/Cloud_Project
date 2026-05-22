@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────────────────────
 
 export type UserRole      = 'MANAGER' | 'EMPLOYEE' | 'ADMIN';
-export type AppMode       = 'api' | 'mock';
+/** All data is loaded from the NestJS API / DynamoDB. */
+export type AppMode = 'api';
 export type TaskStatus    = 'To Do' | 'In Progress' | 'In Review' | 'Done';
 export type TaskPriority  = 'Low' | 'Medium' | 'High' | 'Urgent';
 export type ProjectStatus = 'Active' | 'On Hold' | 'Completed';
@@ -30,13 +31,25 @@ export interface Task {
   status:        TaskStatus;
   priority:      TaskPriority;
   deadline:      string;
-  assigneeName:  string;
+  assigneeName?: string;
   assigneeId:    string;
   teamId:        string;
+  /** S3 object key — stored in DynamoDB */
+  imageKey?:     string;
+  /** Presigned GET URLs returned by API */
   imageUrl?:     string;
+  thumbnailUrl?: string;
+  imageHistory?: string[];
   createdAt:     string;
   updatedAt?:    string;
   closedAt?:     string;
+}
+
+export interface PresignedUploadResponse {
+  uploadUrl: string;
+  key: string;
+  expiresIn: number;
+  resizedKeyPreview?: string;
 }
 
 export interface Project {
@@ -124,6 +137,7 @@ export interface RegisterDto {
   email: string;
   password: string;
   fullName: string;
+  role?: UserRole;
   team?: string;
 }
 
@@ -134,7 +148,21 @@ export interface CreateTaskDto {
   deadline:    string;
   assigneeId:  string;
   teamId:      string;
-  imageUrl?:   string;
+  assigneeName?: string;
+  imageKey?:   string;
+}
+
+export interface UpdateTaskDto {
+  title?: string;
+  description?: string;
+  priority?: TaskPriority;
+  deadline?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  teamId?: string;
+  status?: TaskStatus;
+  imageKey?: string;
+  clearImage?: boolean;
 }
 
 export interface UpdateTaskStatusDto {

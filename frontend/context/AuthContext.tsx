@@ -9,35 +9,29 @@ import React, {
   useMemo,
 } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import type { Session, AppMode, UserRole, UserProfile } from '@/types';
-import { authService, MOCK_USERS } from '@/services';
+import type { Session, UserRole } from '@/types';
+import { authService } from '@/services';
 import { clearStoredUserSession, logoutUserSession, mapCurrentUserToSession } from '@/features/utils';
 
-// ─────────────────────────────────────────────────────────────
-//  Context Shape
-// ─────────────────────────────────────────────────────────────
 interface AuthContextValue {
-  /* state */
   session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  mode: AppMode;
-
-  /* derived helpers */
   isManager: boolean;
   isAdmin: boolean;
   isEmployee: boolean;
-  isLeader: boolean;          // manager OR admin
+  isLeader: boolean;
   userRole: UserRole | null;
   teamId: string;
-
-  /* actions */
-  loginApi: (email: string, password: string) => Promise<void>;
-  loginMock: (userId: string) => void;
-  register: (opts: { email: string; password: string; fullName: string; role: UserRole; team: string }) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  register: (opts: {
+    email: string;
+    password: string;
+    fullName: string;
+    role: UserRole;
+    team: string;
+  }) => Promise<void>;
   logout: () => void;
-  switchUser: (userId: string) => void;   // dev-sandbox quick-switch
-  setMode: (m: AppMode) => void;
   setTheme: (t: 'dark' | 'light') => void;
   refreshSession: () => Promise<void>;
   theme: 'dark' | 'light';
@@ -45,26 +39,16 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-// No localStorage: cookie-only auth and in-memory dev mocks
-
-// ─── Public paths that don't need auth ────────────────────────
 const PUBLIC_PATHS = ['/', '/login', '/register'];
 
-// ─────────────────────────────────────────────────────────────
-//  Provider
-// ─────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [mode, setModeState] = useState<AppMode>('mock');
   const [theme, setThemeState] = useState<'dark' | 'light'>('dark');
-  const [customUsers, setCustomUsers] = useState<UserProfile[]>([]);
-  const allUsers = useMemo(() => [...MOCK_USERS, ...customUsers], [customUsers]);
 
-  // Cookie helpers for theme persistence (plain cookie, not HttpOnly)
   const readCookie = (name: string) => {
     if (typeof document === 'undefined') return undefined;
     const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
@@ -77,35 +61,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}`;
   };
 
-  // ── Restore session on mount ────────────────────────────────
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        // Always try server-side cookie session first
-        try {
-          const res = await authService.getSession();
-          if (res && mounted) {
-            const s = mapCurrentUserToSession(res);
-            setModeState('api');
-            setSession(s);
-          }
-        } catch {
-          // no server session available — will remain in mock mode
+        const res = await authService.getSession();
+        if (res && mounted) {
+          setSession(mapCurrentUserToSession(res));
         }
-        // Restore theme from cookie if present
         const storedTheme = readCookie('mj_theme');
         if (storedTheme === 'light' || storedTheme === 'dark') {
           setThemeState(storedTheme);
         }
+      } catch {
+        if (mounted) setSession(null);
       } finally {
         if (mounted) setIsLoading(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // ── Sync theme class on <html> ──────────────────────────────
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -113,11 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       root.classList.remove('dark');
     }
-    // Persist theme to a plain cookie so UI preference survives sessions
     writeCookie('mj_theme', theme, 365);
   }, [theme]);
 
-  // ── Redirect unauthenticated users ──────────────────────────
   useEffect(() => {
     if (isLoading) return;
     const isPublic = PUBLIC_PATHS.some(
@@ -128,35 +104,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [session, isLoading, pathname, router]);
 
-  // ── Persist helper ──────────────────────────────────────────
   const persist = useCallback((s: Session) => {
     setSession(s);
   }, []);
 
-  // ── API Login ───────────────────────────────────────────────
-  const loginApi = useCallback(async (email: string, password: string) => {
-    const data = await authService.login({ email, password });
-    const u = data.user || {};
-    const s: Session = {
-      userId: u.sub || `user-${Date.now()}`,
-      name: u.fullName || email.split('@')[0],
-      email: u.email,
-      role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-      teamId: u.team || '',
-      profile: {
-        userId: u.sub || `user-${Date.now()}`,
-        name: u.fullName || email.split('@')[0],
-        email: u.email || email,
-        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-        teamId: u.team || '',
-        fullName: u.fullName || email.split('@')[0],
-      },
-      mode: 'api',
-    };
-    setModeState('api');
-    persist(s);
-    router.push('/dashboard');
-  }, [persist, router]);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      await authService.login({ email, password });
+      const res = await authService.getSession();
+      if (!res) {
+        throw new Error('Login succeeded but session could not be loaded');
+      }
+      persist(mapCurrentUserToSession(res));
+      router.push('/dashboard');
+    },
+    [persist, router],
+  );
 
   const refreshSession = useCallback(async () => {
     try {
@@ -165,132 +128,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
         return;
       }
-
-      setModeState('api');
       setSession(mapCurrentUserToSession(res));
     } catch {
       setSession(null);
     }
   }, []);
 
-  // ── Mock Login ──────────────────────────────────────────────
-  const loginMock = useCallback((userId: string) => {
-    const u = allUsers.find((user) => user.userId === userId) || MOCK_USERS[0];
-    const s: Session = {
-      userId: u.userId,
-      name: u.name || u.fullName || 'User',
-      email: u.email,
-      role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-      teamId: u.teamId || '',
-      profile: {
-        userId: u.userId,
-        name: u.name || u.fullName || 'User',
-        email: u.email,
-        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-        teamId: u.teamId || '',
-        fullName: u.fullName || u.name || 'User',
-      },
-      mode: 'mock',
-    };
-    setModeState('mock');
-    persist(s);
-    router.push('/dashboard');
-  }, [allUsers, persist, router]);
-
-  // ── Register ────────────────────────────────────────────────
   const register = useCallback(
-    async (opts: { email: string; password: string; fullName: string; role: UserRole; team: string }) => {
-      if (mode === 'api') {
-        await authService.register({
-          email: opts.email,
-          password: opts.password,
-          fullName: opts.fullName,
-          team: opts.team,
-        });
-        router.push('/login');
-      } else {
-        // Mock register
-        const newUser: UserProfile = {
-          userId: `user-${Date.now()}`,
-          name: opts.fullName,
-          fullName: opts.fullName,
-          email: opts.email,
-          role: opts.role,
-          teamId: opts.role === 'MANAGER' || opts.role === 'ADMIN' ? '' : opts.team,
-        };
-        setCustomUsers((prev) => [...prev, newUser]);
-
-        const s: Session = {
-          userId: newUser.userId,
-          name: newUser.name,
-          email: newUser.email,
-          role: newUser.role,
-          teamId: newUser.teamId,
-          profile: {
-            userId: newUser.userId,
-            name: newUser.name,
-            email: newUser.email,
-            role: newUser.role,
-            teamId: newUser.teamId,
-            fullName: newUser.fullName,
-          },
-          mode: 'mock',
-        };
-        persist(s);
-        router.push('/dashboard');
-      }
+    async (opts: {
+      email: string;
+      password: string;
+      fullName: string;
+      role: UserRole;
+      team: string;
+    }) => {
+      await authService.register({
+        email: opts.email,
+        password: opts.password,
+        fullName: opts.fullName,
+        role: opts.role,
+        team: opts.role === 'EMPLOYEE' ? opts.team : '',
+      });
+      router.push('/login');
     },
-    [mode, persist, router],
+    [router],
   );
 
-  // ── Logout ──────────────────────────────────────────────────
   const logout = useCallback(() => {
-    if (mode === 'api') {
-      void logoutUserSession(async () => {
-        await authService.logout();
-      });
-    } else {
-      clearStoredUserSession();
-    }
+    void logoutUserSession(async () => {
+      await authService.logout();
+    });
     setSession(null);
     router.push('/login');
-  }, [mode, router]);
-
-  // ── Quick-Switch (dev sandbox) ──────────────────────────────
-  const switchUser = useCallback((userId: string) => {
-    const u = allUsers.find((user) => user.userId === userId);
-    if (!u) return;
-    const s: Session = {
-      userId: u.userId,
-      name: u.name || u.fullName || 'User',
-      email: u.email,
-      role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-      teamId: u.teamId || '',
-      profile: {
-        userId: u.userId,
-        name: u.name || u.fullName || 'User',
-        email: u.email,
-        role: (u.role || 'EMPLOYEE').toUpperCase() as UserRole,
-        teamId: u.teamId || '',
-        fullName: u.fullName || u.name || 'User',
-      },
-      mode: session?.mode || 'mock',
-    };
-    persist(s);
-  }, [allUsers, persist, session]);
-
-  const setMode = useCallback((m: AppMode) => {
-    setModeState(m);
-    if (session) {
-      persist({ ...session, mode: m });
-    }
-  }, [session, persist]);
+  }, [router]);
 
   const setTheme = useCallback((t: 'dark' | 'light') => {
     setThemeState(t);
   }, []);
 
-  // ── Derived values ──────────────────────────────────────────
   const value = useMemo<AuthContextValue>(() => {
     const role = session?.role || null;
     const isMgr = role === 'MANAGER';
@@ -299,33 +174,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       isLoading,
       isAuthenticated: !!session,
-      mode,
       isManager: isMgr,
       isAdmin: isAdm,
       isEmployee: role === 'EMPLOYEE',
       isLeader: isMgr || isAdm,
       userRole: role,
       teamId: session?.teamId || '',
-      loginApi,
-      loginMock,
+      login,
       register,
       logout,
-      switchUser,
-      setMode,
       setTheme,
       refreshSession,
       theme,
     };
-  }, [session, isLoading, mode, theme, loginApi, loginMock, register, logout, switchUser, setMode, setTheme, refreshSession]);
+  }, [session, isLoading, theme, login, register, logout, setTheme, refreshSession]);
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// ─── Hook ─────────────────────────────────────────────────────
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) {

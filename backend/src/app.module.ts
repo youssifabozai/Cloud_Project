@@ -14,6 +14,7 @@ import { UsersModule } from './users/users.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { AuditLogsModule } from './audit-Logs/audit-logs.module';
+import { CommentsModule } from './comments/comments.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ ProjectsModule,
     NotificationsModule,
     MetricsModule,
     AuditLogsModule,
+    CommentsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,9 +1,27 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TaskImageUpload } from "@/features/components/task-image-upload";
+import { taskDisplayImageUrl } from "@/features/utils/task-image-upload";
+import {
+  assigneesForTaskDropdown,
+  filterUsersForTeam,
+  pickDefaultAssigneeId,
+  toAssigneeCandidate,
+  dedupeAssignees,
+  type AssigneeCandidate,
+} from "@/features/utils/team-assignees";
+import { tasksService } from "@/services/tasks.service";
+import { usersService } from "@/services/users.service";
+import { projectsService } from "@/services/projects.service";
+import { teamsService, type Team } from "@/services/teams.service";
+import { commentsService } from "@/services/comments.service";
+import { auditLogsService } from "@/services/audit-logs.service";
+import { useToast } from "@/context/ToastContext";
+import type { TaskStatus } from "@/types";
 import {
   KanbanSquare,
   LayoutDashboard,
@@ -25,7 +43,8 @@ import {
   Upload,
   Sparkles,
   Info,
-  MessageSquare
+  MessageSquare,
+  Trash2,
 } from "lucide-react";
 
 // Types
@@ -36,10 +55,12 @@ interface Task {
   status: 'To Do' | 'In Progress' | 'In Review' | 'Done';
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
   deadline: string;
-  assigneeName: string;
+  assigneeName?: string;
   assigneeId: string;
   teamId: string;
+  imageKey?: string;
   imageUrl?: string;
+  thumbnailUrl?: string;
   createdAt: string;
 }
 
@@ -78,141 +99,41 @@ interface DashboardUser {
   teamId: string;
 }
 
-// Seed Data
-const INITIAL_USERS = [
-  { userId: "user-ali", name: "Ali Bin-Ahmed", role: "Manager", teamId: "" },
-  { userId: "user-sara", name: "Sara Jenkins", role: "Employee", teamId: "Frontend" },
-  { userId: "user-omar", name: "Omar Farooq", role: "Employee", teamId: "Backend" },
-  { userId: "user-diana", name: "Diana Prince", role: "Employee", teamId: "QA" },
-  { userId: "user-bruce", name: "Bruce Wayne", role: "Admin", teamId: "" }
-];
+function mapApiUser(u: {
+  userId: string;
+  fullName?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+  teamId?: string;
+}): DashboardUser {
+  return {
+    userId: u.userId,
+    name: u.fullName || u.name || u.email?.split("@")[0] || "User",
+    role: String(u.role || "EMPLOYEE"),
+    teamId: u.teamId || "",
+  };
+}
 
-const INITIAL_TASKS: Task[] = [
-  {
-    taskId: "task-a",
-    title: "Implement Landing Page Animations",
-    description: "Design and implement premium CSS/Framer motion micro-interactions on the landing page header. Ensure both dark and light modes look flawless and professional.",
-    status: "To Do",
-    priority: "High",
-    deadline: "2026-05-22",
-    assigneeName: "Sara Jenkins",
-    assigneeId: "user-sara",
-    teamId: "Frontend",
-    imageUrl: "https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=400&h=200&q=80",
-    createdAt: "2026-05-20T10:00:00.000Z"
-  },
-  {
-    taskId: "task-b",
-    title: "Connect SQS Queue & SNS Fanout Fan",
-    description: "Setup event-driven pipeline on AWS backend to capture task assignment triggers, push notifications to an SQS queue, and dispatch notification emails to assignees.",
-    status: "In Progress",
-    priority: "Urgent",
-    deadline: "2026-05-22",
-    assigneeName: "Omar Farooq",
-    assigneeId: "user-omar",
-    teamId: "Backend",
-    createdAt: "2026-05-20T12:00:00.000Z"
-  },
-  {
-    taskId: "task-c",
-    title: "Configure AWS CloudFront CDN",
-    description: "Setup static distributions for the UI bundle, optimizing low-latency access and configuring origin request headers to match backend CORS requests correctly.",
-    status: "In Review",
-    priority: "Medium",
-    deadline: "2026-05-24",
-    assigneeName: "Ali Bin-Ahmed",
-    assigneeId: "user-ali",
-    teamId: "DevOps",
-    createdAt: "2026-05-19T09:00:00.000Z"
-  },
-  {
-    taskId: "task-d",
-    title: "Enforce DynamoDB Index Team Query",
-    description: "Apply correct teamId global secondary index lookup conditions on backend services, ensuring employee database requests are tightly isolated on server side.",
-    status: "Done",
-    priority: "High",
-    deadline: "2026-05-21",
-    assigneeName: "Omar Farooq",
-    assigneeId: "user-omar",
-    teamId: "Backend",
-    createdAt: "2026-05-18T14:00:00.000Z"
-  },
-  {
-    taskId: "task-e",
-    title: "Integration Smoke Tests & Cypress Pipeline",
-    description: "Implement automated Cypress test scripts to simulate the demo scenarios (Manager vs Team Employee isolation checks) for validation runs.",
-    status: "To Do",
-    priority: "Low",
-    deadline: "2026-05-26",
-    assigneeName: "Diana Prince",
-    assigneeId: "user-diana",
-    teamId: "QA",
-    createdAt: "2026-05-21T08:30:00.000Z"
-  }
-];
+function mapApiProject(p: Record<string, unknown>): Project {
+  return {
+    projectId: String(p.projectId),
+    name: String(p.name ?? "Untitled"),
+    description: String(p.description ?? ""),
+    status: (p.status as Project["status"]) || "Active",
+    deadline: String(p.deadline ?? ""),
+    progress: Number(p.progress ?? 0),
+    managerName: String(p.managerName ?? p.createdBy ?? "—"),
+  };
+}
 
-const INITIAL_PROJECTS: Project[] = [
-  {
-    projectId: "project-alpha",
-    name: "Mini-Jira AWS Platform",
-    description: "Scalable task management app built using high-availability AWS architecture, Cognito auth, DynamoDB, S3, Lambdas, and custom CloudWatch dashboards.",
-    status: "Active",
-    deadline: "2026-05-22",
-    progress: 75,
-    managerName: "Ali Bin-Ahmed"
-  },
-  {
-    projectId: "project-beta",
-    name: "Enterprise Workspace Migration",
-    description: "Data sync automation engine to migrate large scale enterprise workspaces into custom DynamoDB partition tables safely.",
-    status: "On Hold",
-    deadline: "2026-08-15",
-    progress: 30,
-    managerName: "Ali Bin-Ahmed"
-  }
-];
-
-const INITIAL_COMMENTS: Comment[] = [
-  {
-    commentId: "c-1",
-    taskId: "task-b",
-    authorName: "Ali Bin-Ahmed",
-    text: "Omar, let's verify that the Lambda Assignment Worker drains the queue correctly during load testing.",
-    createdAt: "2026-05-20T16:00:00.000Z"
-  },
-  {
-    commentId: "c-2",
-    taskId: "task-b",
-    authorName: "Omar Farooq",
-    text: "Verified! Custom metrics are successfully showing in the CloudWatch dashboard now.",
-    createdAt: "2026-05-20T17:30:00.000Z"
-  }
-];
-
-const INITIAL_ACTIVITIES: ActivityLog[] = [
-  {
-    logId: "act-1",
-    taskId: "task-d",
-    taskTitle: "Enforce DynamoDB Index Team Query",
-    actorName: "Omar Farooq",
-    actionType: "STATUS_CHANGED",
-    message: "Omar Farooq moved task to Done",
-    createdAt: "2026-05-21T09:00:00.000Z"
-  },
-  {
-    logId: "act-2",
-    taskId: "task-b",
-    taskTitle: "Connect SQS Queue & SNS Fanout Fan",
-    actorName: "Ali Bin-Ahmed",
-    actionType: "ASSIGNED",
-    message: "Ali Bin-Ahmed assigned task to Omar Farooq",
-    createdAt: "2026-05-20T12:00:00.000Z"
-  }
-];
+function displayAssignee(task: Task): string {
+  return task.assigneeName || task.assigneeId || "Unassigned";
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-
+  const { pushToast } = useToast();
 
   const auth = useAuth();
   // Theme comes from AuthContext
@@ -220,7 +141,10 @@ export default function DashboardPage() {
   const setTheme = auth.setTheme;
 
   // Dynamic user list combining seed data and custom registered sandbox accounts
-  const userList = INITIAL_USERS;
+  const [userList, setUserList] = useState<DashboardUser[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+
   const currentUser = useMemo<DashboardUser | null>(() => {
     if (!auth.session) {
       return null;
@@ -230,9 +154,9 @@ export default function DashboardPage() {
       userId: auth.session.userId,
       name: auth.session.name,
       role: auth.session.role,
-      teamId: auth.session.teamId,
+      teamId: auth.isEmployee ? auth.session.teamId : '',
     };
-  }, [auth.session]);
+  }, [auth.session, auth.isEmployee]);
 
   // Router view controls
   const [activeTab, setActiveTab] = useState<'dashboard' | 'board' | 'projects' | 'teams' | 'activity'>('dashboard');
@@ -240,10 +164,10 @@ export default function DashboardPage() {
   const [teamFilter, setTeamFilter] = useState("All");
 
   // App Database states
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
-  const [comments, setComments] = useState<Comment[]>(INITIAL_COMMENTS);
-  const [activities, setActivities] = useState<ActivityLog[]>(INITIAL_ACTIVITIES);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   // New task inputs
@@ -252,12 +176,99 @@ export default function DashboardPage() {
   const [newDesc, setNewDesc] = useState("");
   const [newPriority, setNewPriority] = useState<'Low' | 'Medium' | 'High' | 'Urgent'>("Medium");
   const [newDeadline, setNewDeadline] = useState("2026-05-22");
-  const [newTeam, setNewTeam] = useState("Frontend");
-  const [newAssignee, setNewAssignee] = useState("Sara Jenkins");
-  const [newImage, setNewImage] = useState<string | undefined>(undefined);
+  const [newTeam, setNewTeam] = useState("");
+  const [newAssigneeId, setNewAssigneeId] = useState("");
+  const [newImageKey, setNewImageKey] = useState<string | undefined>(undefined);
+  const [newImagePreview, setNewImagePreview] = useState<string | undefined>(undefined);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
+  const [teamAssignees, setTeamAssignees] = useState<AssigneeCandidate[]>([]);
+  const [assigneesLoading, setAssigneesLoading] = useState(false);
+  const createFormDefaultsSet = useRef(false);
+  const assigneesFetchGen = useRef(0);
+
+  const orgAssignees = useMemo(
+    () =>
+      dedupeAssignees(
+        userList.map((u) =>
+          toAssigneeCandidate({
+            userId: u.userId,
+            name: u.name,
+            role: u.role,
+            teamId: u.teamId,
+          }),
+        ),
+      ),
+    [userList],
+  );
+
+  const createTaskAssigneeOptions = useMemo(
+    () => assigneesForTaskDropdown(teamAssignees),
+    [teamAssignees],
+  );
+
+  const loadTasksFromApi = useCallback(async () => {
+    setTasksLoading(true);
+    try {
+      const teamQs =
+        teamFilter !== "All" && teamFilter ? teamFilter : undefined;
+      const data = await tasksService.getAll(teamQs);
+      setTasks(
+        data.map((t) => ({
+          ...t,
+          assigneeName: t.assigneeName || t.assigneeId,
+        })) as Task[],
+      );
+    } catch (e) {
+      pushToast(
+        "error",
+        "Failed to load tasks",
+        e instanceof Error ? e.message : "Check backend and Cognito session",
+      );
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [teamFilter, pushToast]);
+
+  const loadDashboardData = useCallback(async () => {
+    setDataLoading(true);
+    try {
+      const [usersData, projectsData, teamsData] = await Promise.all([
+        usersService.getAll(),
+        projectsService.getAll(),
+        teamsService.getAll(),
+      ]);
+
+      const mappedUsers = usersData.map((u) => mapApiUser(u));
+      setUserList(mappedUsers);
+      setProjects(
+        projectsData.map((p) =>
+          mapApiProject(p as unknown as Record<string, unknown>),
+        ),
+      );
+      setTeams(teamsData);
+      if (!createFormDefaultsSet.current && teamsData.length > 0) {
+        createFormDefaultsSet.current = true;
+        setNewTeam(teamsData[0].teamId);
+      }
+
+      await loadTasksFromApi();
+    } catch (e) {
+      pushToast(
+        "error",
+        "Failed to load dashboard data",
+        e instanceof Error ? e.message : "Ensure backend is running",
+      );
+    } finally {
+      setDataLoading(false);
+    }
+  }, [loadTasksFromApi, pushToast]);
 
   // Discussion comments
   const [commentText, setCommentText] = useState("");
+  const [taskHistory, setTaskHistory] = useState<ActivityLog[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
 
   // Alarm mock status
   const [alarmActive, setAlarmActive] = useState(true);
@@ -270,17 +281,188 @@ export default function DashboardPage() {
       return;
     }
 
-    // Merge any runtime-only custom users from AuthContext mock bank
-    try {
-      // If AuthContext keeps a mock bank inside, we don't persist it here — keep demo users transient
-    } catch {
-      // ignore
-    }
-
     // Apply theme class (in-memory only)
     const root = window.document.documentElement;
     if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
   }, [auth.isLoading, auth.session, theme, router]);
+
+  useEffect(() => {
+    if (!auth.isLoading && auth.session) {
+      void auth.refreshSession();
+      void loadDashboardData();
+    }
+  }, [auth.isLoading, auth.session, auth.refreshSession, loadDashboardData]);
+
+  useEffect(() => {
+    if (!auth.isLoading && auth.session) {
+      void loadTasksFromApi();
+    }
+  }, [teamFilter, auth.isLoading, auth.session, loadTasksFromApi]);
+
+  const loadActivities = useCallback(async () => {
+    if (!auth.session || !currentUser) return;
+    try {
+      if (auth.isManager || auth.isAdmin) {
+        const logs = await auditLogsService.getAll();
+        setActivities(logs);
+      } else if (currentUser.teamId) {
+        const logs = await auditLogsService.getRecentForTeam(currentUser.teamId);
+        setActivities(logs);
+      } else {
+        setActivities([]);
+      }
+    } catch (e) {
+      pushToast(
+        "error",
+        "Activity log",
+        e instanceof Error ? e.message : "Failed to load audit log",
+      );
+    }
+  }, [auth.session, auth.isManager, auth.isAdmin, currentUser, pushToast]);
+
+  const loadCommentsForTask = useCallback(
+    async (taskId: string) => {
+      setCommentsLoading(true);
+      try {
+        const list = await commentsService.getByTaskId(taskId);
+        setComments((prev) => {
+          const others = prev.filter((c) => c.taskId !== taskId);
+          return [...others, ...list];
+        });
+      } catch (e) {
+        pushToast(
+          "error",
+          "Comments",
+          e instanceof Error ? e.message : "Failed to load comments",
+        );
+      } finally {
+        setCommentsLoading(false);
+      }
+    },
+    [pushToast],
+  );
+
+  const loadTaskHistory = useCallback(
+    async (taskId: string) => {
+      try {
+        const logs = await auditLogsService.getTaskHistory(taskId);
+        setTaskHistory(logs);
+      } catch {
+        setTaskHistory([]);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!auth.isLoading && auth.session && currentUser) {
+      void loadActivities();
+    }
+  }, [auth.isLoading, auth.session, currentUser, loadActivities]);
+
+  useEffect(() => {
+    if (selectedTask) {
+      void loadCommentsForTask(selectedTask.taskId);
+      void loadTaskHistory(selectedTask.taskId);
+    } else {
+      setTaskHistory([]);
+    }
+  }, [selectedTask, loadCommentsForTask, loadTaskHistory]);
+
+  const openCreateTaskModal = useCallback(() => {
+    const teamWithMembers =
+      teams.find((t) => filterUsersForTeam(orgAssignees, t.teamId, teams).length > 0) ??
+      teams[0];
+    const teamId = teamWithMembers?.teamId ?? newTeam;
+    if (teamId) {
+      setNewTeam(teamId);
+    }
+    setShowCreateTaskModal(true);
+  }, [teams, orgAssignees, newTeam]);
+
+  useEffect(() => {
+    if (!showCreateTaskModal) {
+      setAssigneesLoading(false);
+      return;
+    }
+    if (!newTeam) {
+      setTeamAssignees([]);
+      setNewAssigneeId("");
+      return;
+    }
+
+    const fetchGen = ++assigneesFetchGen.current;
+    const teamId = newTeam;
+
+    (async () => {
+      const local = filterUsersForTeam(orgAssignees, teamId, teams);
+      if (local.length > 0) {
+        setTeamAssignees(local);
+        setNewAssigneeId((prev) => {
+          const options = assigneesForTaskDropdown(local);
+          if (prev && options.some((o) => o.userId === prev)) {
+            return prev;
+          }
+          return pickDefaultAssigneeId(local);
+        });
+      } else {
+        setAssigneesLoading(true);
+      }
+
+      let apiMapped: AssigneeCandidate[] = [];
+
+      try {
+        const apiUsers = await usersService.getByTeam(teamId);
+        apiMapped = dedupeAssignees(
+          apiUsers.map((u) =>
+            toAssigneeCandidate({
+              userId: u.userId,
+              fullName: u.fullName,
+              name: u.name,
+              email: u.email,
+              role: u.role,
+              teamId: u.teamId,
+            }),
+          ),
+        );
+      } catch (err) {
+        if (fetchGen === assigneesFetchGen.current) {
+          pushToast(
+            "error",
+            "Could not load team members",
+            err instanceof Error ? err.message : "Check manager role and login",
+          );
+        }
+      }
+
+      if (fetchGen !== assigneesFetchGen.current) {
+        return;
+      }
+
+      const members = dedupeAssignees([...apiMapped, ...local]);
+      setTeamAssignees(members);
+      setNewAssigneeId((prev) => {
+        const options = assigneesForTaskDropdown(members);
+        if (prev && options.some((o) => o.userId === prev)) {
+          return prev;
+        }
+        return pickDefaultAssigneeId(members);
+      });
+      setAssigneesLoading(false);
+    })();
+
+    return () => {
+      assigneesFetchGen.current += 1;
+    };
+  }, [showCreateTaskModal, newTeam, orgAssignees, teams, pushToast]);
+
+  const teamDistribution = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const team of teams) {
+      counts[team.teamId] = tasks.filter((t) => t.teamId === team.teamId).length;
+    }
+    return counts;
+  }, [teams, tasks]);
 
   if (!currentUser) {
     return (
@@ -293,7 +475,7 @@ export default function DashboardPage() {
   // Filter Tasks based on ROLE ISOLATION
   const filteredTasks = tasks.filter(task => {
     // Enforce role and GSI isolations:
-    const isManagerOrAdmin = currentUser.role === "Manager" || currentUser.role === "Admin" || currentUser.role === "ADMIN" || currentUser.role === "MANAGER";
+    const isManagerOrAdmin = auth.isManager || auth.isAdmin;
 
     // If standard employee, strictly locked to their GSI teamId container
     if (!isManagerOrAdmin) {
@@ -315,105 +497,156 @@ export default function DashboardPage() {
       return (
         task.title.toLowerCase().includes(query) ||
         task.description.toLowerCase().includes(query) ||
-        task.assigneeName.toLowerCase().includes(query)
+        displayAssignee(task).toLowerCase().includes(query)
       );
     }
 
     return true;
   });
 
-  const handleStatusChange = (taskId: string, newStatus: Task['status']) => {
-    const updated = tasks.map(t => {
-      if (t.taskId === taskId) {
-        // Enforce employee restrictions (only can update if assigned to them)
-        const isManagerOrAdmin = currentUser.role === "Manager" || currentUser.role === "Admin" || currentUser.role === "ADMIN" || currentUser.role === "MANAGER";
-        if (!isManagerOrAdmin && t.assigneeId !== currentUser.userId) {
-          alert("Team Isolation Rule: Employees can only move tasks assigned to themselves.");
-          return t;
-        }
+  const handleStatusChange = async (taskId: string, newStatus: Task['status']) => {
+    const isManagerOrAdmin = auth.isManager || auth.isAdmin;
 
-        const logEntry: ActivityLog = {
-          logId: `act-${Date.now()}`,
-          taskId: t.taskId,
-          taskTitle: t.title,
-          actorName: currentUser.name,
-          actionType: "STATUS_CHANGED",
-          message: `${currentUser.name} moved "${t.title}" from ${t.status} to ${newStatus}`,
-          createdAt: new Date().toISOString()
-        };
-        setActivities(prev => [logEntry, ...prev]);
+    const target = tasks.find((t) => t.taskId === taskId);
+    if (!target) return;
 
-        return { ...t, status: newStatus };
+    if (!isManagerOrAdmin && target.assigneeId !== currentUser.userId) {
+      pushToast(
+        "error",
+        "Not allowed",
+        "Employees can only move tasks assigned to themselves.",
+      );
+      return;
+    }
+
+    try {
+      const res = await tasksService.updateStatus(taskId, newStatus as TaskStatus);
+      const updatedTask = (res.task || {
+        ...target,
+        status: newStatus,
+      }) as Task;
+
+      setTasks((prev) =>
+        prev.map((t) => (t.taskId === taskId ? { ...t, ...updatedTask } : t)),
+      );
+      if (selectedTask?.taskId === taskId) {
+        setSelectedTask({ ...selectedTask, ...updatedTask });
       }
-      return t;
-    });
-    setTasks(updated);
-
-    if (selectedTask && selectedTask.taskId === taskId) {
-      setSelectedTask(prev => prev ? { ...prev, status: newStatus } : null);
+      pushToast("success", "Status updated", res.message);
+      await loadTasksFromApi();
+      await loadActivities();
+      if (selectedTask?.taskId === taskId) {
+        await loadTaskHistory(taskId);
+      }
+    } catch (e) {
+      pushToast(
+        "error",
+        "Update failed",
+        e instanceof Error ? e.message : "Could not update status",
+      );
     }
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
-    const assignee = userList.find(u => u.name === newAssignee) || userList[1];
+    const assignee = createTaskAssigneeOptions.find(
+      (u) => u.userId === newAssigneeId,
+    );
+    if (!assignee || !newTeam) {
+      pushToast(
+        "error",
+        "No assignee",
+        "Select a team with at least one member, or assign users to that team in DynamoDB.",
+      );
+      return;
+    }
 
-    const newTask: Task = {
-      taskId: `task-${Date.now()}`,
-      title: newTitle,
-      description: newDesc,
-      status: "To Do",
-      priority: newPriority,
-      deadline: newDeadline,
-      assigneeName: newAssignee,
-      assigneeId: assignee.userId,
-      teamId: newTeam,
-      imageUrl: newImage,
-      createdAt: new Date().toISOString()
-    };
+    setIsCreatingTask(true);
+    try {
+      const created = await tasksService.create({
+        title: newTitle.trim(),
+        description: newDesc.trim() || "—",
+        priority: newPriority,
+        deadline: new Date(newDeadline).toISOString(),
+        assigneeId: assignee.userId,
+        assigneeName: assignee.name,
+        teamId: newTeam,
+        ...(newImageKey ? { imageKey: newImageKey } : {}),
+      });
 
-    setTasks(prev => [newTask, ...prev]);
-
-    const logEntry: ActivityLog = {
-      logId: `act-${Date.now()}`,
-      taskId: newTask.taskId,
-      taskTitle: newTask.title,
-      actorName: currentUser.name,
-      actionType: "CREATED",
-      message: `${currentUser.name} created task "${newTask.title}" and assigned it to ${newAssignee}`,
-      createdAt: new Date().toISOString()
-    };
-    setActivities(prev => [logEntry, ...prev]);
+      const taskTitle =
+        (created as { title?: string }).title ?? newTitle.trim();
+      pushToast("success", "Task created", `"${taskTitle}" saved`);
+      await loadTasksFromApi();
+      await loadActivities();
+    } catch (err) {
+      pushToast(
+        "error",
+        "Create failed",
+        err instanceof Error ? err.message : "Manager role required",
+      );
+      return;
+    } finally {
+      setIsCreatingTask(false);
+    }
 
     setNewTitle("");
     setNewDesc("");
-    setNewImage(undefined);
+    setNewImageKey(undefined);
+    setNewImagePreview(undefined);
+    setNewAssigneeId("");
     setShowCreateTaskModal(false);
   };
 
-  const handleAddComment = (e: React.FormEvent) => {
+  const handleDeleteTask = async () => {
+    if (!selectedTask || !isUserLeader) return;
+
+    const confirmed = window.confirm(
+      `Delete task "${selectedTask.title}"? This removes it from DynamoDB and deletes S3 images.`,
+    );
+    if (!confirmed) return;
+
+    setIsDeletingTask(true);
+    try {
+      await tasksService.remove(selectedTask.taskId);
+      setTasks((prev) => prev.filter((t) => t.taskId !== selectedTask.taskId));
+      setComments((prev) => prev.filter((c) => c.taskId !== selectedTask.taskId));
+      setSelectedTask(null);
+      await loadActivities();
+      pushToast("success", "Task deleted", `"${selectedTask.title}" was removed`);
+    } catch (err) {
+      pushToast(
+        "error",
+        "Delete failed",
+        err instanceof Error ? err.message : "Manager or admin role required",
+      );
+    } finally {
+      setIsDeletingTask(false);
+    }
+  };
+
+  const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentText.trim() || !selectedTask) return;
 
-    const newComment: Comment = {
-      commentId: `c-${Date.now()}`,
-      taskId: selectedTask.taskId,
-      authorName: currentUser.name,
-      text: commentText,
-      createdAt: new Date().toISOString()
-    };
-
-    setComments(prev => [...prev, newComment]);
-    setCommentText("");
-  };
-
-  const handleImageUploadSimulated = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const url = URL.createObjectURL(file);
-      setNewImage(url);
+    try {
+      await commentsService.create({
+        taskId: selectedTask.taskId,
+        text: commentText.trim(),
+      });
+      setCommentText("");
+      await loadCommentsForTask(selectedTask.taskId);
+      await loadTaskHistory(selectedTask.taskId);
+      await loadActivities();
+      pushToast("success", "Comment posted", "Saved to DynamoDB");
+    } catch (err) {
+      pushToast(
+        "error",
+        "Comment failed",
+        err instanceof Error ? err.message : "Could not post comment",
+      );
     }
   };
 
@@ -427,14 +660,7 @@ export default function DashboardPage() {
   const completedTasks = tasks.filter(t => t.status === "Done").length;
   const inReviewTasks = tasks.filter(t => t.status === "In Review").length;
 
-  const teamDistribution = {
-    Frontend: tasks.filter(t => t.teamId === "Frontend").length,
-    Backend: tasks.filter(t => t.teamId === "Backend").length,
-    QA: tasks.filter(t => t.teamId === "QA").length,
-    DevOps: tasks.filter(t => t.teamId === "DevOps").length,
-  };
-
-  const isUserLeader = currentUser.role === "Manager" || currentUser.role === "Admin" || currentUser.role === "ADMIN" || currentUser.role === "MANAGER";
+  const isUserLeader = auth.isManager || auth.isAdmin;
 
   return (
     <div className="cloud-page flex min-h-screen text-[#202633] transition-all duration-300">
@@ -559,28 +785,6 @@ export default function DashboardPage() {
               {activeTab === 'dashboard' ? 'Overview Analytics' : activeTab === 'board' ? 'Kanban Taskboard' : activeTab}
             </h2>
 
-            {/* Quick Demo User Switcher */}
-            <div className="flex items-center gap-2 bg-white/42 px-2.5 py-1 rounded-full border border-white/70">
-              <Shield className="h-3.5 w-3.5 text-[#A21BF4]" />
-              <span className="text-[11px] font-semibold text-[#475569]">Demo Switcher:</span>
-              <select
-                value={currentUser?.userId}
-                onChange={(e) => {
-                  const selected = userList.find(u => u.userId === e.target.value);
-                  if (selected) {
-                    // Use AuthContext quick-switch for mock users
-                    auth.switchUser(selected.userId);
-                  }
-                }}
-                className="bg-transparent text-[11px] font-bold text-[#A21BF4] focus:outline-none cursor-pointer border-none"
-              >
-                {userList.map((u) => (
-                  <option key={u.userId} value={u.userId}>
-                    {u.name} ({u.role} {u.teamId ? `• ${u.teamId}` : ""})
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           <div className="flex items-center gap-4">
@@ -710,75 +914,38 @@ export default function DashboardPage() {
                       </span>
                     </div>
 
-                    {/* Styled custom CSS Chart meters */}
                     <div className="flex flex-col gap-5 py-2">
-                      {/* Frontend Progress Bar */}
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-teal-400"></span>
-                            Frontend Development Team
-                          </span>
-                          <span className="font-bold">{teamDistribution.Frontend} assignments</span>
-                        </div>
-                        <div className="h-3.5 w-full rounded-full bg-[var(--bg-primary)] overflow-hidden p-0.5 border border-[var(--border-color)]">
-                          <div
-                            style={{ width: `${(teamDistribution.Frontend / Math.max(totalTasks, 1)) * 100}%` }}
-                            className="h-full rounded-full bg-gradient-to-r from-teal-500 to-cyan-400 transition-all duration-1000 shadow-sm"
-                          ></div>
-                        </div>
-                      </div>
-
-                      {/* Backend Progress Bar */}
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-violet-500"></span>
-                            Backend Services Team
-                          </span>
-                          <span className="font-bold">{teamDistribution.Backend} assignments</span>
-                        </div>
-                        <div className="h-3.5 w-full rounded-full bg-[var(--bg-primary)] overflow-hidden p-0.5 border border-[var(--border-color)]">
-                          <div
-                            style={{ width: `${(teamDistribution.Backend / Math.max(totalTasks, 1)) * 100}%` }}
-                            className="h-full rounded-full bg-gradient-to-r from-violet-500 to-purple-400 transition-all duration-1000 shadow-sm"
-                          ></div>
-                        </div>
-                      </div>
-
-                      {/* QA Progress Bar */}
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-pink-500"></span>
-                            QA & Testing Team
-                          </span>
-                          <span className="font-bold">{teamDistribution.QA} assignments</span>
-                        </div>
-                        <div className="h-3.5 w-full rounded-full bg-[var(--bg-primary)] overflow-hidden p-0.5 border border-[var(--border-color)]">
-                          <div
-                            style={{ width: `${(teamDistribution.QA / Math.max(totalTasks, 1)) * 100}%` }}
-                            className="h-full rounded-full bg-gradient-to-r from-pink-500 to-rose-400 transition-all duration-1000 shadow-sm"
-                          ></div>
-                        </div>
-                      </div>
-
-                      {/* DevOps Progress Bar */}
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-sky-500"></span>
-                            AWS DevOps Cloud Deployments
-                          </span>
-                          <span className="font-bold">{teamDistribution.DevOps} assignments</span>
-                        </div>
-                        <div className="h-3.5 w-full rounded-full bg-[var(--bg-primary)] overflow-hidden p-0.5 border border-[var(--border-color)]">
-                          <div
-                            style={{ width: `${(teamDistribution.DevOps / Math.max(totalTasks, 1)) * 100}%` }}
-                            className="h-full rounded-full bg-gradient-to-r from-sky-500 to-blue-400 transition-all duration-1000 shadow-sm"
-                          ></div>
-                        </div>
-                      </div>
+                      {Object.keys(teamDistribution).length === 0 ? (
+                        <p className="text-xs text-[var(--text-secondary)]">No teams in DynamoDB yet.</p>
+                      ) : (
+                        Object.entries(teamDistribution).map(([teamId, count], index) => {
+                          const barColors = [
+                            "from-teal-500 to-cyan-400",
+                            "from-violet-500 to-purple-400",
+                            "from-pink-500 to-rose-400",
+                            "from-sky-500 to-blue-400",
+                          ];
+                          const dotColors = ["bg-teal-400", "bg-violet-500", "bg-pink-500", "bg-sky-500"];
+                          const label = teams.find((t) => t.teamId === teamId)?.name || teamId;
+                          return (
+                            <div key={teamId} className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between text-xs font-medium">
+                                <span className="flex items-center gap-2">
+                                  <span className={`h-2 w-2 rounded-full ${dotColors[index % dotColors.length]}`}></span>
+                                  {label}
+                                </span>
+                                <span className="font-bold">{count} assignments</span>
+                              </div>
+                              <div className="h-3.5 w-full rounded-full bg-[var(--bg-primary)] overflow-hidden p-0.5 border border-[var(--border-color)]">
+                                <div
+                                  style={{ width: `${(count / Math.max(totalTasks, 1)) * 100}%` }}
+                                  className={`h-full rounded-full bg-gradient-to-r ${barColors[index % barColors.length]} transition-all duration-1000 shadow-sm`}
+                                ></div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
 
@@ -831,10 +998,11 @@ export default function DashboardPage() {
                         className="bg-transparent text-xs font-bold text-[var(--primary)] border-none focus:outline-none cursor-pointer disabled:opacity-50"
                       >
                         <option value="All">All Company Teams</option>
-                        <option value="Frontend">Frontend Team</option>
-                        <option value="Backend">Backend Team</option>
-                        <option value="QA">QA Team</option>
-                        <option value="DevOps">DevOps Cloud Team</option>
+                        {teams.map((t) => (
+                          <option key={t.teamId} value={t.teamId}>
+                            {t.name || t.teamId}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -842,7 +1010,7 @@ export default function DashboardPage() {
                   {/* Create task triggers for Managers/Admins */}
                   {isUserLeader && (
                     <button
-                      onClick={() => setShowCreateTaskModal(true)}
+                      onClick={openCreateTaskModal}
                       className="px-4 py-2 text-xs font-semibold bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white hover:opacity-90 rounded-xl shadow-premium flex items-center gap-2 cursor-pointer transition-opacity"
                     >
                       <Plus className="h-4 w-4" /> Create Company Task
@@ -910,10 +1078,10 @@ export default function DashboardPage() {
                                 </div>
 
                                 {/* Attachments S3 visual seed image */}
-                                {task.imageUrl && (
+                                {taskDisplayImageUrl(task) && (
                                   <div className="w-full h-24 rounded-lg overflow-hidden border border-[var(--border-color)]">
                                     <img
-                                      src={task.imageUrl}
+                                      src={taskDisplayImageUrl(task)}
                                       alt="Thumbnail"
                                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                                     />
@@ -924,9 +1092,9 @@ export default function DashboardPage() {
                                 <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-3 mt-1 text-[10px] text-[var(--text-secondary)] font-medium">
                                   <div className="flex items-center gap-1.5">
                                     <div className="h-5 w-5 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold text-[9px] border border-blue-500/10">
-                                      {task.assigneeName.charAt(0)}
+                                      {displayAssignee(task).charAt(0)}
                                     </div>
-                                    <span className="truncate max-w-[80px]">{task.assigneeName}</span>
+                                    <span className="truncate max-w-[80px]">{displayAssignee(task)}</span>
                                   </div>
 
                                   <div className="flex items-center gap-1 font-semibold text-rose-500/80">
@@ -1113,8 +1281,18 @@ export default function DashboardPage() {
               <div className="flex flex-col gap-6">
                 <div className="p-5 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]">
                   <h3 className="text-sm font-bold">AWS DynamoDB Audit Table Log</h3>
-                  <p className="text-xs text-[var(--text-secondary)]">Immutable records of company mutations, status transitions, and Cognito events</p>
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    {isUserLeader
+                      ? "Company-wide activity from mini-jira-ActivityLog"
+                      : "Recent activity for your team"}
+                  </p>
                 </div>
+
+                {activities.length === 0 && (
+                  <p className="text-xs text-[var(--text-tertiary)] text-center py-8">
+                    No audit entries yet. Change a task status or post a comment.
+                  </p>
+                )}
 
                 <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-premium overflow-hidden">
                   <table className="w-full text-left text-xs border-collapse">
@@ -1137,7 +1315,7 @@ export default function DashboardPage() {
                               {act.actionType}
                             </span>
                           </td>
-                          <td className="p-4 font-semibold">{act.taskTitle}</td>
+                          <td className="p-4 font-semibold">{act.taskTitle || act.taskId}</td>
                           <td className="p-4 text-[var(--text-secondary)]">{act.message}</td>
                           <td className="p-4 text-right text-[var(--text-tertiary)] font-medium">
                             {new Date(act.createdAt).toLocaleString()}
@@ -1169,12 +1347,25 @@ export default function DashboardPage() {
                 </span>
                 <h3 className="font-bold text-base mt-2 leading-6">{selectedTask.title}</h3>
               </div>
-              <button
-                onClick={() => setSelectedTask(null)}
-                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm font-bold bg-[var(--bg-primary)] p-1.5 px-3 rounded-lg border border-[var(--border-color)]"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {isUserLeader && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteTask()}
+                    disabled={isDeletingTask}
+                    className="flex items-center gap-1.5 text-xs font-bold text-rose-500 hover:text-rose-400 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {isDeletingTask ? "Deleting…" : "Delete"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedTask(null)}
+                  className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm font-bold bg-[var(--bg-primary)] p-1.5 px-3 rounded-lg border border-[var(--border-color)]"
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             {/* Layout Grid details */}
@@ -1190,11 +1381,29 @@ export default function DashboardPage() {
                 </div>
 
                 {/* S3 Attachment Preview */}
-                {selectedTask.imageUrl && (
+                {taskDisplayImageUrl(selectedTask) && (
                   <div className="flex flex-col gap-2">
                     <h4 className="text-xs font-bold text-[var(--text-secondary)]">S3 Bucket Attachment</h4>
                     <div className="rounded-2xl border border-[var(--border-color)] overflow-hidden bg-[var(--bg-primary)] p-2">
-                      <img src={selectedTask.imageUrl} alt="S3 attachment" className="w-full h-auto rounded-xl object-contain max-h-[220px]" />
+                      <img src={taskDisplayImageUrl(selectedTask)} alt="S3 attachment" className="w-full h-auto rounded-xl object-contain max-h-[220px]" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Task activity timeline */}
+                {taskHistory.length > 0 && (
+                  <div className="flex flex-col gap-2 border-t border-[var(--border-color)] pt-4">
+                    <h4 className="text-xs font-bold text-[var(--text-secondary)]">Task History</h4>
+                    <div className="flex flex-col gap-2 max-h-[120px] overflow-y-auto pr-1">
+                      {taskHistory.map((act) => (
+                        <div key={act.logId} className="text-[10px] text-[var(--text-secondary)] border-l-2 border-[var(--primary)]/30 pl-2">
+                          <span className="font-semibold text-[var(--text-primary)]">{act.actionType}</span>
+                          {" — "}{act.message}
+                          <span className="block text-[var(--text-tertiary)] mt-0.5">
+                            {new Date(act.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1207,7 +1416,9 @@ export default function DashboardPage() {
 
                   {/* Comment List */}
                   <div className="flex flex-col gap-3 max-h-[200px] overflow-y-auto pr-1">
-                    {comments.filter(c => c.taskId === selectedTask.taskId).length === 0 ? (
+                    {commentsLoading ? (
+                      <p className="text-xs text-[var(--text-tertiary)] italic py-2">Loading comments…</p>
+                    ) : comments.filter(c => c.taskId === selectedTask.taskId).length === 0 ? (
                       <p className="text-xs text-[var(--text-tertiary)] italic py-2">No comments posted yet.</p>
                     ) : (
                       comments.filter(c => c.taskId === selectedTask.taskId).map(c => (
@@ -1263,9 +1474,9 @@ export default function DashboardPage() {
                   <span className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wide">Assignee</span>
                   <div className="flex items-center gap-2 mt-0.5">
                     <div className="h-6 w-6 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold text-[10px]">
-                      {selectedTask.assigneeName.charAt(0)}
+                      {displayAssignee(selectedTask).charAt(0)}
                     </div>
-                    <span className="font-bold">{selectedTask.assigneeName}</span>
+                    <span className="font-bold">{displayAssignee(selectedTask)}</span>
                   </div>
                 </div>
 
@@ -1361,58 +1572,70 @@ export default function DashboardPage() {
                   <label className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wide">Assign To Team (isolation scope)</label>
                   <select
                     value={newTeam}
-                    onChange={(e) => {
-                      setNewTeam(e.target.value);
-                      if (e.target.value === 'Frontend') setNewAssignee('Sara Jenkins');
-                      else if (e.target.value === 'Backend') setNewAssignee('Omar Farooq');
-                      else if (e.target.value === 'QA') setNewAssignee('Diana Prince');
-                      else setNewAssignee('Ali Bin-Ahmed');
-                    }}
+                    onChange={(e) => setNewTeam(e.target.value)}
                     className="p-2 w-full rounded-xl bg-[var(--bg-primary)] border border-[var(--border-color)] text-xs"
                   >
-                    <option value="Frontend">Frontend Team</option>
-                    <option value="Backend">Backend Team</option>
-                    <option value="QA">QA Team</option>
-                    <option value="DevOps">DevOps Cloud Team</option>
+                    {teams.map((t) => (
+                      <option key={t.teamId} value={t.teamId}>
+                        {t.name || t.teamId}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wide">Individual Assignee</label>
                   <select
-                    value={newAssignee}
-                    onChange={(e) => setNewAssignee(e.target.value)}
-                    className="p-2 w-full rounded-xl bg-[var(--bg-primary)] border border-[var(--border-color)] text-xs"
+                    value={newAssigneeId}
+                    onChange={(e) => setNewAssigneeId(e.target.value)}
+                    disabled={assigneesLoading}
+                    className="p-2 w-full rounded-xl bg-[var(--bg-primary)] border border-[var(--border-color)] text-xs disabled:opacity-60"
                   >
-                    {userList.map((u) => (
-                      <option key={u.userId} value={u.name}>{u.name}</option>
-                    ))}
+                    {assigneesLoading ? (
+                      <option value="">Loading team members…</option>
+                    ) : createTaskAssigneeOptions.length === 0 ? (
+                      <option value="">
+                        No employees on this team — assign users in DynamoDB (teamId = this team)
+                      </option>
+                    ) : (
+                      createTaskAssigneeOptions.map((u) => (
+                        <option key={u.userId} value={u.userId}>
+                          {u.name}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
               </div>
 
-              {/* S3 image upload mock */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wide">Task Image Attachment (S3 Bucket Upload)</label>
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 px-4 py-2 border border-dashed border-[var(--border-color)] hover:bg-[var(--bg-primary)]/50 rounded-xl cursor-pointer transition-colors text-[var(--text-secondary)]">
-                    <Upload className="h-4 w-4" />
-                    <span>Upload image to S3</span>
-                    <input type="file" accept="image/*" onChange={handleImageUploadSimulated} className="hidden" />
-                  </label>
-                  {newImage && (
-                    <span className="text-[10px] font-semibold text-emerald-500 flex items-center gap-1">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> S3 Cache Uploaded!
-                    </span>
-                  )}
-                </div>
-              </div>
+              <TaskImageUpload
+                disabled={isCreatingTask}
+                onUploaded={(key, preview) => {
+                  setNewImageKey(key);
+                  setNewImagePreview(preview);
+                }}
+                onClear={() => {
+                  setNewImageKey(undefined);
+                  setNewImagePreview(undefined);
+                }}
+                initialPreviewUrl={newImagePreview}
+                initialImageKey={newImageKey}
+              />
 
               <button
                 type="submit"
-                className="mt-2 py-3 bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white hover:opacity-95 font-bold text-xs rounded-xl shadow-premium cursor-pointer transition-opacity"
+                disabled={
+                  isCreatingTask ||
+                  assigneesLoading ||
+                  !newTitle.trim() ||
+                  !newDesc.trim() ||
+                  !newTeam ||
+                  !newAssigneeId ||
+                  createTaskAssigneeOptions.length === 0
+                }
+                className="mt-2 py-3 bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white hover:opacity-95 font-bold text-xs rounded-xl shadow-premium cursor-pointer transition-opacity disabled:opacity-50"
               >
-                Deploy Task Assignment
+                {isCreatingTask ? "Creating…" : "Deploy Task Assignment"}
               </button>
             </form>
           </div>

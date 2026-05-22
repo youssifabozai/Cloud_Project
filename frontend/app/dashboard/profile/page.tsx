@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -550,7 +550,17 @@ function ProfilePageContent({
 export default function ProfilePage() {
   const router = useRouter();
   const auth = useAuth();
-  const sessionProfile = useMemo(() => createProfileState(auth.session?.profile ?? null), [auth.session?.profile]);
+
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      void auth.refreshSession();
+    }
+  }, [auth.isAuthenticated, auth.refreshSession]);
+
+  const sessionProfile = useMemo(
+    () => createProfileState(auth.session?.profile ?? null),
+    [auth.session?.profile, auth.session?.role, auth.session?.teamId],
+  );
 
   if (auth.isLoading || !sessionProfile) {
     return (
