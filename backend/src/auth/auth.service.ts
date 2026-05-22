@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import {
   CognitoIdentityProviderClient,
   AdminInitiateAuthCommand,
@@ -204,9 +204,31 @@ export class AuthService {
         dynamoDbProfile: userProfile,
       };
     } catch (error: any) {
+      const errorName = error?.name ?? error?.__type;
+      if (errorName === 'InvalidPasswordException') {
+        throw new BadRequestException(
+          'Password does not meet Cognito policy requirements. Use a stronger password.',
+        );
+      }
+
       this.logger.error(`Error creating user in Cognito: ${error.message}`, error.stack);
       throw error;
     }
+  }
+
+  async registerPublicUser(data: {
+    email: string;
+    password: string;
+    fullName: string;
+    team?: string;
+  }) {
+    return this.createUser({
+      email: data.email,
+      password: data.password,
+      fullName: data.fullName,
+      role: Role.EMPLOYEE,
+      team: data.team ?? '',
+    });
   }
 
   async logout(accessToken: string) {

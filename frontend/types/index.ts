@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────
 
 export type UserRole      = 'MANAGER' | 'EMPLOYEE' | 'ADMIN';
-export type AppMode       = 'api';
+export type AppMode       = 'api' | 'mock';
 export type TaskStatus    = 'To Do' | 'In Progress' | 'In Review' | 'Done';
 export type TaskPriority  = 'Low' | 'Medium' | 'High' | 'Urgent';
 export type ProjectStatus = 'Active' | 'On Hold' | 'Completed';
@@ -118,6 +118,13 @@ export interface CreateUserDto {
   fullName: string;
   role:     UserRole;
   team:     string;
+}
+
+export interface RegisterDto {
+  email: string;
+  password: string;
+  fullName: string;
+  team?: string;
 }
 
 export interface CreateTaskDto {

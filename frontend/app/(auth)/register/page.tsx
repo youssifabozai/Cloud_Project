@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowRight, Box, Briefcase, Key, Mail, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useToast } from "@/context/ToastContext";
 import type { UserRole } from "@/types";
 
 export default function RegisterPage() {
@@ -15,9 +16,13 @@ export default function RegisterPage() {
   const [team, setTeam] = useState("Frontend");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [registerMode, setRegisterMode] = useState<"api" | "mock">("mock");
+  const [registerMode, setRegisterMode] = useState<"api" | "mock">("api");
   const auth = useAuth();
   const theme = auth.theme;
+  const { pushToast } = useToast();
+  useEffect(() => {
+    auth.setMode(registerMode);
+  }, [auth, registerMode]);
   const normalizeRole = (value: "Manager" | "Employee" | "Admin"): UserRole => {
     if (value === "Manager") {
       return "MANAGER";
@@ -34,10 +39,17 @@ export default function RegisterPage() {
     e.preventDefault();
     if (!fullName || !email || !password) return;
 
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      pushToast("info", "Make a strong password", "Use at least 8 characters and include a mix of letters, numbers, and symbols.");
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
     try {
+      auth.setMode(registerMode);
       await auth.register({ email, password, fullName, role: normalizeRole(role), team });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -67,6 +79,7 @@ export default function RegisterPage() {
               key={mode}
               onClick={() => {
                 setRegisterMode(mode);
+                auth.setMode(mode);
                 setError(null);
               }}
               className={`rounded-xl py-2.5 transition ${registerMode === mode ? "cloud-button" : "text-[#475569] hover:bg-white/38"}`}
@@ -116,6 +129,9 @@ export default function RegisterPage() {
                 className="cloud-input"
                 required
               />
+              <span className="mt-1 block text-[10px] font-semibold text-[#64748B]">
+                Use at least 8 characters.
+              </span>
             </Field>
 
             <div className="grid grid-cols-2 gap-4">

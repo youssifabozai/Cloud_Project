@@ -1,6 +1,6 @@
 import api from './api';
 import { fetchCurrentUser } from '@/features/api';
-import type { LoginDto, LoginResponse, CreateUserDto } from '@/types';
+import type { LoginDto, LoginResponse, CreateUserDto, RegisterDto } from '@/types';
 
 export const authService = {
   /** Authenticate via AWS Cognito — returns tokens + user profile */
@@ -18,4 +18,8 @@ export const authService = {
   /** Manager/Admin only: create a new Cognito + DynamoDB user */
   createUser: (dto: CreateUserDto) =>
     api.post<{ success: boolean; data: unknown }>('/auth/create-user', dto),
+
+  /** Public self-registration: creates Cognito + DynamoDB user */
+  register: (dto: RegisterDto) =>
+    api.post<{ success: boolean; data: unknown }>('/auth/register', dto),
 };

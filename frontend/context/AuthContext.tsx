@@ -201,11 +201,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = useCallback(
     async (opts: { email: string; password: string; fullName: string; role: UserRole; team: string }) => {
       if (mode === 'api') {
-        await authService.createUser({
+        await authService.register({
           email: opts.email,
           password: opts.password,
           fullName: opts.fullName,
-          role: opts.role,
           team: opts.team,
         });
         router.push('/login');

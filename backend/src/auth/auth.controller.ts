@@ -57,6 +57,30 @@ export class AuthController {
     };
   }
 
+  @Public()
+  @Post('register')
+  async register(
+    @Body()
+    body: {
+      email: string;
+      password: string;
+      fullName: string;
+      team?: string;
+    },
+  ) {
+    if (!body?.email || !body?.password || !body?.fullName) {
+      throw new BadRequestException('email, password, and fullName are required');
+    }
+
+    const createdUser = await this.authService.registerPublicUser(body);
+
+    return {
+      success: true,
+      message: 'User registered successfully',
+      data: createdUser,
+    };
+  }
+
   @Post('create-user')
   async createUser(
     @CurrentUser() user: any,

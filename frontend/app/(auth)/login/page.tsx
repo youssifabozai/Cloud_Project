@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight, Box, ChevronRight, Key, Mail, UserCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useToast } from "@/context/ToastContext";
 import type { UserRole } from "@/types";
 
 const INITIAL_USERS = [
@@ -25,6 +26,7 @@ export default function LoginPage() {
   const [loginMode, setLoginMode] = useState<"api" | "mock">("mock");
   const auth = useAuth();
   const theme = auth.theme;
+  const { pushToast } = useToast();
 
   const toUserRole = (value: "Manager" | "Employee" | "Admin"): UserRole => {
     if (value === "Manager") {
@@ -46,8 +48,10 @@ export default function LoginPage() {
     if (loginMode === "api") {
       try {
         await auth.loginApi(email, password);
+        pushToast("success", "Login success", "Your session is active.");
       } catch (err: any) {
         setError(err.message || "Failed to reach NestJS auth server. Ensure backend is running.");
+        pushToast("error", "Login failed", "Check your email and password, then try again.");
         setLoading(false);
       }
     } else {
@@ -76,8 +80,10 @@ export default function LoginPage() {
           });
         }
         router.push("/dashboard");
+        pushToast("success", "Login success", "Your session is active.");
       } catch {
         setError("Mock login failed");
+        pushToast("error", "Login failed", "Unable to create a mock session.");
         setLoading(false);
       }
     }
