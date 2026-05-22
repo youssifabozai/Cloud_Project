@@ -2,6 +2,31 @@
 
 This repository contains the backend code for the Mini-Jira application, built with NestJS and fully integrated with AWS (DynamoDB, S3, SNS, SQS, EventBridge, Cognito).
 
+## Project Overview
+
+This project is a lightweight team task-management web application (similar to Jira or Trello) fully running on AWS. The application supports multiple teams inside a company, where a manager assigns tasks to specific employees on specific teams, and each team only sees its own work. 
+
+The system uses an event-driven architecture with AWS services (SNS, SQS, EventBridge), a Lambda-based image pipeline, and CloudWatch dashboards for monitoring. It is designed for high availability, deployed across at least two Availability Zones behind an Application Load Balancer and CloudFront.
+
+## Deliverables
+
+- **Architecture Diagram:** `[Insert link or image to the detailed AWS architecture diagram here]`
+- **Live Application URL:** `[Insert CloudFront Distribution URL here]`
+- **Demo Video:** `[Insert Demo Video Link here]`
+
+## AWS Architecture
+
+- **EC2 (Auto Scaling Group):** Hosts the backend across at least 2 Availability Zones.
+- **Application Load Balancer:** Distributes traffic across EC2 instances and runs health checks.
+- **CloudFront:** CDN for low-latency delivery of the application.
+- **DynamoDB:** Stores all application data (Users, Teams, Projects, Tasks, Comments) using GSIs for team isolation.
+- **S3:** Stores task image attachments (originals and resized thumbnails).
+- **Lambda:** Event-driven serverless compute for image resizing, SQS assignment worker, and EventBridge daily digests.
+- **SNS & SQS:** Fan-out architecture for task-assignment events, decoupling the API from background processing.
+- **EventBridge:** Scheduled cron rules for daily notifications.
+- **Cognito:** Manages user authentication, roles, and team membership.
+- **CloudWatch:** Monitoring, custom metrics, dashboards, and alarms.
+
 ## API Endpoints Mapping & Business Rules
 
 This document maps out all the endpoints that will be built for the Mini-Jira AWS application.

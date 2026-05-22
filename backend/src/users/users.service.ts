@@ -2,7 +2,13 @@ import { BadRequestException, ForbiddenException, Injectable, InternalServerErro
 import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { UpdateProfileDto } from './update-profile.dto';
+import {
+  CognitoIdentityProviderClient,
+  AdminDeleteUserCommand,
+  AdminUpdateUserAttributesCommand,
+} from '@aws-sdk/client-cognito-identity-provider';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { Role } from '../common/decorators/roles.decorator';
 
 type AuthenticatedUser = {
   userId: string;
@@ -11,13 +17,13 @@ type AuthenticatedUser = {
   email: string;
 };
 
-type UserRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
-
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   private readonly usersTableName: string;
   private readonly teamsTableName: string;
+  private readonly cognitoClient: CognitoIdentityProviderClient;
+  private readonly userPoolId: string;
 
   private getErrorDetails(error: unknown): { message: string; stack?: string } {
     if (error instanceof Error) {
@@ -58,10 +64,10 @@ export class UsersService {
     throw new InternalServerErrorException('An unexpected error occurred. Please try again later.');
   }
 
-  private normalizeRole(role: string): UserRole | null {
+  private normalizeRole(role: string): Role | null {
     const normalizedRole = role?.toUpperCase();
-    if (normalizedRole === 'ADMIN' || normalizedRole === 'MANAGER' || normalizedRole === 'EMPLOYEE') {
-      return normalizedRole;
+    if (normalizedRole === Role.ADMIN || normalizedRole === Role.MANAGER || normalizedRole === Role.EMPLOYEE) {
+      return normalizedRole as Role;
     }
 
     return null;
@@ -86,7 +92,18 @@ export class UsersService {
     return users;
   }
 
-  private async getUsersByTeam(teamId: string) {
+  private isMissingTeamIndexError(error: unknown): boolean {
+    const errorName = (error as { name?: string })?.name ?? '';
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+
+    return (
+      errorName === 'ValidationException' &&
+      (message.includes('specified index') || message.includes('teamid-index') || message.includes('index'))
+    );
+  }
+
+  async getUsersByTeamId(teamId: string) {
     try {
       const command = new QueryCommand({
         TableName: this.usersTableName,
@@ -100,10 +117,13 @@ export class UsersService {
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Items || [];
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '';
-      if (!message.includes('Index') && !message.includes('ValidationException')) {
+      if (!this.isMissingTeamIndexError(error)) {
         throw error;
       }
+
+      this.logger.warn(
+        'teamId-index is missing in DynamoDB; falling back to Scan for team-based user lookup',
+      );
 
       const users: any[] = [];
       let lastEvaluatedKey: Record<string, unknown> | undefined;
@@ -140,6 +160,10 @@ export class UsersService {
     if (!this.teamsTableName) {
       throw new Error('TABLE_TEAMS environment variable is not set');
     }
+    this.userPoolId = this.configService.get<string>('COGNITO_USER_POOL_ID')!;
+    this.cognitoClient = new CognitoIdentityProviderClient({
+      region: this.configService.get<string>('AWS_REGION') || 'us-east-1',
+    });
   }
 
   /**
@@ -151,7 +175,7 @@ export class UsersService {
     try {
       const command = new GetCommand({
         TableName: this.usersTableName,
-       Key: { userId },
+        Key: { userId },
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
       return result.Item || null;
@@ -163,6 +187,47 @@ export class UsersService {
   }
 
   /**
+   * Fallback lookup for legacy records that were saved with the email as the key
+   * instead of the Cognito `sub`.
+   */
+  async getUserByEmail(email: string) {
+    try {
+      if (!email?.trim()) {
+        return null;
+      }
+
+      const targetEmail = email.trim().toLowerCase();
+      const users = await this.getAllUsers();
+      return users.find((user) => (user.email ?? '').toString().trim().toLowerCase() === targetEmail) ?? null;
+    } catch (error: unknown) {
+      const { message, stack } = this.getErrorDetails(error);
+      this.logger.error(`Error fetching user by email ${email}: ${message}`, stack);
+      throw error;
+    }
+  }
+
+  private async syncUserToCognito(user: { email?: string; fullName?: string; role?: string; teamId?: string }) {
+    if (!user.email?.trim()) {
+      return;
+    }
+
+    const userAttributes = [
+      { Name: 'email', Value: user.email },
+      { Name: 'name', Value: user.fullName ?? '' },
+      { Name: 'custom:role', Value: (user.role ?? 'EMPLOYEE').toUpperCase() },
+      { Name: 'custom:team', Value: user.teamId ?? '' },
+    ].filter((attr) => attr.Value !== undefined);
+
+    await this.cognitoClient.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: this.userPoolId,
+        Username: user.email,
+        UserAttributes: userAttributes,
+      }),
+    );
+  }
+
+  /**
    * Create a new user in DynamoDB
    * @param userId - The unique identifier for the user
    * @param userData - The user data to store
@@ -171,7 +236,7 @@ export class UsersService {
   async createUser(userId: string, userData: any) {
     try {
       const user = {
-            userId,
+        userId,
         ...userData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -181,6 +246,7 @@ export class UsersService {
         Item: user,
       });
       await this.awsService.dynamoDbDocClient.send(command);
+      await this.syncUserToCognito(user);
       return user;
     } catch (error: unknown) {
       const { message, stack } = this.getErrorDetails(error);
@@ -198,25 +264,31 @@ export class UsersService {
   async updateUser(userId: string, updateData: any) {
     try {
       const timestamp = new Date().toISOString();
-      const updateExpression = Object.keys(updateData)
-        .map((key) => `${key} = :${key}`)
-        .join(', ');
-      const expressionAttributeValues = Object.keys(updateData).reduce(
-        (acc, key) => {
-          acc[`:${key}`] = updateData[key];
-          return acc;
-        },
-        { ':updatedAt': timestamp },
-      );
+      const expressionAttributeNames: Record<string, string> = {};
+      const expressionAttributeValues: Record<string, any> = {
+        ':updatedAt': timestamp,
+      };
+
+      const updateExpressionParts = Object.keys(updateData).map((key) => {
+        const attributeName = `#${key}`;
+        const attributeValue = `:${key}`;
+        expressionAttributeNames[attributeName] = key;
+        expressionAttributeValues[attributeValue] = updateData[key];
+        return `${attributeName} = ${attributeValue}`;
+      });
 
       const command = new UpdateCommand({
         TableName: this.usersTableName,
         Key: { userId },
-        UpdateExpression: `SET ${updateExpression}, updatedAt = :updatedAt`,
+        UpdateExpression: `SET ${updateExpressionParts.join(', ')}, updatedAt = :updatedAt`,
+        ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: expressionAttributeValues,
         ReturnValues: 'ALL_NEW',
       });
       const result = await this.awsService.dynamoDbDocClient.send(command);
+      if (result.Attributes) {
+        await this.syncUserToCognito(result.Attributes as any);
+      }
       return result.Attributes;
     } catch (error: unknown) {
       const { message, stack } = this.getErrorDetails(error);
@@ -233,7 +305,7 @@ export class UsersService {
     try {
       const command = new DeleteCommand({
         TableName: this.usersTableName,
-       Key: { userId },
+        Key: { userId },
       });
       await this.awsService.dynamoDbDocClient.send(command);
     } catch (error: unknown) {
@@ -301,10 +373,10 @@ export class UsersService {
       }
 
       let users: any[] = [];
-      if (role === 'ADMIN' || role === 'MANAGER') {
+      if (role === Role.ADMIN || role === Role.MANAGER) {
         users = await this.getAllUsers();
       } else {
-        users = await this.getUsersByTeam(currentUser.teamId);
+        users = await this.getUsersByTeamId(currentUser.teamId);
       }
 
       return {
@@ -367,7 +439,7 @@ export class UsersService {
   async assignUserToTeam(userId: string, teamId: string, currentUser: AuthenticatedUser) {
     try {
       const role = this.normalizeRole(currentUser.role);
-      if (role !== 'ADMIN') {
+      if (role !== Role.ADMIN) {
         throw new ForbiddenException('Only ADMIN users can assign teams');
       }
 
@@ -381,7 +453,7 @@ export class UsersService {
       // Validate team existence using the already-resolved table name
       const teamGet = new GetCommand({
         TableName: this.teamsTableName,
-        Key: { id: teamId },
+        Key: { teamId: teamId },
       });
       const teamResult = await this.awsService.dynamoDbDocClient.send(teamGet);
       if (!teamResult.Item) {
@@ -412,7 +484,7 @@ export class UsersService {
   async assignUserRole(userId: string, role: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Only ADMIN users can change roles');
       }
 
@@ -453,14 +525,14 @@ export class UsersService {
       if (!role) {
         throw new ForbiddenException('Access denied: unsupported user role');
       }
-      if (role !== 'ADMIN' && role !== 'MANAGER') {
+      if (role !== Role.ADMIN && role !== Role.MANAGER) {
         throw new ForbiddenException('Access denied: only ADMIN and MANAGER can view team members');
       }
       if (!teamId?.trim()) {
         throw new BadRequestException('teamId parameter is required');
       }
 
-      const users = await this.getUsersByTeam(teamId);
+      const users = await this.getUsersByTeamId(teamId);
 
       return {
         success: true,
@@ -486,7 +558,7 @@ export class UsersService {
   async elevateToAdmin(userId: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Access denied: only ADMIN users can elevate accounts');
       }
 
@@ -502,7 +574,7 @@ export class UsersService {
 
       // Prevent duplicate elevation
       const targetRole = this.normalizeRole(targetUser.role ?? '');
-      if (targetRole === 'ADMIN') {
+      if (targetRole === Role.ADMIN) {
         throw new BadRequestException(`User ${userId} is already an ADMIN`);
       }
 
@@ -531,7 +603,7 @@ export class UsersService {
   async removeUser(userId: string, currentUser: AuthenticatedUser) {
     try {
       const callerRole = this.normalizeRole(currentUser.role);
-      if (callerRole !== 'ADMIN') {
+      if (callerRole !== Role.ADMIN) {
         throw new ForbiddenException('Access denied: only ADMIN users can delete accounts');
       }
 
@@ -552,11 +624,25 @@ export class UsersService {
 
       // Prevent deleting other ADMIN accounts
       const targetRole = this.normalizeRole(targetUser.role ?? '');
-      if (targetRole === 'ADMIN') {
+      if (targetRole === Role.ADMIN) {
         throw new ForbiddenException('Cannot delete an ADMIN account');
       }
 
       await this.deleteUser(userId);
+
+      // Delete from Cognito
+      if (targetUser.email) {
+        try {
+          await this.cognitoClient.send(
+            new AdminDeleteUserCommand({
+              UserPoolId: this.userPoolId,
+              Username: targetUser.email,
+            }),
+          );
+        } catch (e) {
+          this.logger.error(`Failed to delete user ${targetUser.email} from Cognito`, e);
+        }
+      }
 
       this.logger.log(`User ${userId} deleted by admin ${currentUser.userId}`);
 
@@ -638,7 +724,7 @@ export class UsersService {
       ]);
 
       // ── EMPLOYEE: restricted single-team view ─────────────────────────────
-      if (role === 'EMPLOYEE') {
+      if (role === Role.EMPLOYEE) {
         if (!currentUser.teamId) {
           return {
             success: true,
@@ -651,7 +737,7 @@ export class UsersService {
           };
         }
 
-        const ownTeam = allTeams.find((t) => t.id === currentUser.teamId) ?? null;
+        const ownTeam = allTeams.find((t) => t.teamId === currentUser.teamId) ?? null;
         const teamMembers = allUsers
           .filter((u) => u.teamId === currentUser.teamId)
           .map((u) => this.toPublicUser(u));
@@ -662,7 +748,7 @@ export class UsersService {
           data: {
             scope: 'TEAM',
             team: ownTeam
-              ? { teamId: ownTeam.id, name: ownTeam.name, description: ownTeam.description ?? null }
+              ? { teamId: ownTeam.teamId, name: ownTeam.name, description: ownTeam.description ?? null }
               : null,
             members: teamMembers,
           },
@@ -673,18 +759,18 @@ export class UsersService {
 
       // Bucket users by role
       const admins = allUsers
-        .filter((u) => u.role?.toUpperCase() === 'ADMIN')
+        .filter((u) => u.role?.toUpperCase() === Role.ADMIN)
         .map((u) => this.toFullUser(u));
 
       const managers = allUsers
-        .filter((u) => u.role?.toUpperCase() === 'MANAGER')
+        .filter((u) => u.role?.toUpperCase() === Role.MANAGER)
         .map((u) => this.toFullUser(u));
 
       // Build a map of teamId → team metadata + members
       const teamMap = new Map<string, any>();
       for (const team of allTeams) {
-        teamMap.set(team.id, {
-          teamId: team.id,
+        teamMap.set(team.teamId, {
+          teamId: team.teamId,
           name: team.name,
           description: team.description ?? null,
           createdAt: team.createdAt,
@@ -698,7 +784,7 @@ export class UsersService {
       const unassigned: any[] = [];
       for (const user of allUsers) {
         const userRole = user.role?.toUpperCase();
-        if (userRole !== 'EMPLOYEE') continue;
+        if (userRole !== Role.EMPLOYEE) continue;
 
         if (user.teamId && teamMap.has(user.teamId)) {
           teamMap.get(user.teamId).members.push(this.toFullUser(user));
@@ -716,7 +802,7 @@ export class UsersService {
             totalAdmins: admins.length,
             totalManagers: managers.length,
             totalTeams: allTeams.length,
-            totalEmployees: allUsers.filter((u) => u.role?.toUpperCase() === 'EMPLOYEE').length,
+            totalEmployees: allUsers.filter((u) => u.role?.toUpperCase() === Role.EMPLOYEE).length,
           },
           admins,
           managers,

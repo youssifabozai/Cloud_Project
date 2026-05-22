@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -11,9 +12,10 @@ import {
   GetUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { UsersService } from '../../users/users.service';
 
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
+export class AuthenticationGuard implements CanActivate {
   private readonly region = process.env.AWS_REGION || 'us-east-1';
 
   private readonly verifier = CognitoJwtVerifier.create({
@@ -26,7 +28,12 @@ export class JwtAuthGuard implements CanActivate {
     region: this.region,
   });
 
-  constructor(private readonly reflector: Reflector) {}
+  private readonly logger = new Logger(AuthenticationGuard.name);
+
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly usersService: UsersService,
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -40,44 +47,68 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization as string | undefined;
+    const cookieToken = request.cookies ? request.cookies.accessToken : undefined;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing bearer token');
+    let token: string | undefined = undefined;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (cookieToken) {
+      token = cookieToken;
+    } else {
+      throw new UnauthorizedException('Missing bearer token or accessToken cookie');
     }
 
-    const token = authHeader.split(' ')[1];
-
     try {
-      const payload = await this.verifier.verify(token);
+      const payload = await this.verifier.verify(token!);
+      const userId = payload.sub;
 
-      const userResponse = await this.cognitoClient.send(
-        new GetUserCommand({
-          AccessToken: token,
-        }),
-      );
+      // Fetch full profile from DynamoDB (Source of Truth for Roles)
+      let dbUser = await this.usersService.getUserById(userId);
+      let cognitoEmail: string | undefined;
 
-      const attributes = Object.fromEntries(
-        (userResponse.UserAttributes ?? []).map((attr) => [
-          attr.Name as string,
-          attr.Value,
-        ]),
-      );
+      if (!dbUser) {
+        // Fallback to Cognito attributes so we can recover legacy users stored by email.
+        const userResponse = await this.cognitoClient.send(
+          new GetUserCommand({
+            AccessToken: token,
+          }),
+        );
+
+        const attributes = Object.fromEntries(
+          (userResponse.UserAttributes ?? []).map((attr) => [
+            attr.Name as string,
+            attr.Value,
+          ]),
+        );
+
+        cognitoEmail = attributes.email;
+        if (cognitoEmail) {
+          dbUser = await this.usersService.getUserByEmail(cognitoEmail);
+        }
+
+        if (!dbUser) {
+          request.user = {
+            userId: userId,
+            username: userResponse.Username,
+            email: cognitoEmail,
+            role: 'EMPLOYEE', // Default for unknown DB users
+            teamId: null,
+          };
+          return true;
+        }
+      }
 
       request.user = {
-        userId: attributes.sub ?? payload.sub,
-        username: userResponse.Username,
-        email: attributes.email,
-        role: attributes['custom:role'],
-       teamId: attributes['custom:team'],
+        userId: dbUser.userId,
+        email: dbUser.email,
+        role: String(dbUser.role || 'EMPLOYEE').trim().toUpperCase(),
+        teamId: dbUser.teamId,
+        fullName: dbUser.fullName,
       };
 
       return true;
     } catch (error: any) {
-      console.error('JWT AUTH ERROR:', {
-        name: error?.name,
-        message: error?.message,
-      });
-
+      this.logger.error('JWT AUTH ERROR:', error?.message);
       throw new UnauthorizedException('Invalid or expired token');
     }
   }

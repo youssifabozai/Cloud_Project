@@ -1,11 +1,11 @@
 import { Controller, Delete, Get, Param, Put, Body, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { CurrentUser } from '../common/guards/decorators/current-user.decorator';
-import { Roles } from '../common/guards/decorators/roles.decorator';
-import { UpdateProfileDto } from './update-profile.dto';
-import { UpdateTeamDto } from './update-team.dto';
-import { UpdateRoleDto } from './update-role.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Role, Roles } from '../common/decorators/roles.decorator';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateTeamDto } from './dto/update-team.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 
 type AuthenticatedUser = {
   userId: string;
@@ -17,7 +17,7 @@ type AuthenticatedUser = {
 @ApiTags('Users')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Get()
   async getUsers(@CurrentUser() user: AuthenticatedUser) {
@@ -35,7 +35,7 @@ export class UsersController {
   }
 
   @Get('team/:teamId')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles(Role.ADMIN, Role.MANAGER)
   async getUsersByTeam(
     @Param('teamId') teamId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -53,7 +53,7 @@ export class UsersController {
   }
 
   @Put(':userId/team')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async assignTeam(
     @Param('userId') userId: string,
     @Body() body: UpdateTeamDto,
@@ -63,7 +63,7 @@ export class UsersController {
   }
 
   @Put(':userId/role')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async updateRole(
     @Param('userId') userId: string,
     @Body() body: UpdateRoleDto,
@@ -73,7 +73,7 @@ export class UsersController {
   }
 
   @Delete(':userId')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async deleteUser(
     @Param('userId') userId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -82,7 +82,7 @@ export class UsersController {
   }
 
   @Post('admin')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   async elevateToAdmin(
     @Body('userId') userId: string,
     @CurrentUser() user: AuthenticatedUser,

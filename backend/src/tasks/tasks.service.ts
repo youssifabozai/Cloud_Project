@@ -37,9 +37,9 @@ export class TasksService {
         private readonly configService: ConfigService,
     ) {
         this.tasksTableName =
-            this.configService.get<string>('TASKS_TABLE_NAME') || 'mini-jira-Tasks';
+            this.configService.get<string>('TABLE_TASKS') || 'mini-jira-Tasks';
         this.activityLogTableName =
-            this.configService.get<string>('ACTIVITY_LOG_TABLE_NAME') ||
+            this.configService.get<string>('TABLE_ACTIVITY_LOG') ||
             'mini-jira-ActivityLog';
         this.originalsBucketName =
             this.configService.get<string>('ORIGINAL_IMAGES_BUCKET') || 'original-images';
@@ -47,14 +47,19 @@ export class TasksService {
             this.configService.get<string>('RESIZED_IMAGES_BUCKET') || 'resized-images';
     }
 
+    private isManagerOrAdmin(user: CurrentUser): boolean {
+        const r = user.role?.toUpperCase();
+        return r === 'MANAGER' || r === 'ADMIN';
+    }
+
     private isManager(user: CurrentUser): boolean {
-        return user.role?.toLowerCase() === 'manager';
+        return user.role?.toUpperCase() === 'MANAGER';
     }
 
     async findAllForUser(user: CurrentUser, requestedTeamId?: string) {
-        // Manager can see all tasks.
-        // If manager chooses a team filter, we query by teamId-index.
-        if (this.isManager(user)) {
+        // Manager or Admin can see all tasks.
+        // If they choose a team filter, we query by teamId-index.
+        if (this.isManagerOrAdmin(user)) {
             if (requestedTeamId) {
                 return this.findByTeamId(requestedTeamId);
             }
@@ -98,8 +103,8 @@ export class TasksService {
             throw new NotFoundException('Task not found.');
         }
 
-        // Manager can open any task.
-        if (this.isManager(user)) {
+        // Manager or Admin can open any task.
+        if (this.isManagerOrAdmin(user)) {
             return task;
         }
 
@@ -261,8 +266,8 @@ export class TasksService {
         const task = await this.findOneForUser(taskId, user);
 
         // Employees can update status only for tasks assigned to them.
-        // Manager can update any task.
-        if (!this.isManager(user) && task.assigneeId !== user.userId) {
+        // Managers and Admins can update any task.
+        if (!this.isManagerOrAdmin(user) && task.assigneeId !== user.userId) {
             throw new ForbiddenException('You can update only tasks assigned to you.');
         }
 
@@ -302,7 +307,7 @@ export class TasksService {
             new PutCommand({
                 TableName: this.activityLogTableName,
                 Item: {
-                    logId: `log_${Date.now()}`,
+                    logId: uuidv4(),
                     taskId: task.taskId,
                     teamId: task.teamId,
                     actorUserId: user.userId,

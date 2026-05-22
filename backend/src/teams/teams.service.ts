@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AwsService } from '../AWS/aws.service';
 import { GetCommand, QueryCommand, PutCommand, ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
+import { UsersService } from '../users/users.service';
 import { CreateTeamDto } from './create-team.dto';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class TeamsService {
 	constructor(
 		private readonly configService: ConfigService,
 		private readonly awsService: AwsService,
+		private readonly usersService: UsersService,
 	) {
 		this.teamsTableName = this.configService.get<string>('TABLE_TEAMS')!;
 		if (!this.teamsTableName) {
@@ -68,7 +70,7 @@ export class TeamsService {
 		try {
 			const command = new GetCommand({
 				TableName: this.teamsTableName,
-				Key: { id: teamId },
+				Key: { teamId: teamId },
 			});
 			const result = await this.awsService.dynamoDbDocClient.send(command);
 			return result.Item || null;
@@ -236,6 +238,10 @@ export class TeamsService {
 	 */
 	async createTeam(dto: CreateTeamDto, currentUser: any) {
 		try {
+			const role = currentUser.role?.toUpperCase();
+			if (role !== 'ADMIN') {
+				throw new ForbiddenException('Access denied: only ADMIN can create teams');
+			}
 			const teamId = uuidv4();
 			const now = new Date().toISOString();
 
@@ -246,7 +252,7 @@ export class TeamsService {
 			}
 
 			const team = {
-				id: teamId,
+				teamId: teamId,
 				name: dto.name,
 				description: dto.description || '',
 				createdAt: now,
@@ -287,31 +293,19 @@ export class TeamsService {
 				throw new NotFoundException(`Team ${teamId} not found`);
 			}
 
-			// 2. Guard: refuse deletion when team still has members
-			const membersResult = await this.awsService.dynamoDbDocClient.send(
-				new QueryCommand({
-					TableName: this.usersTableName,
-					IndexName: 'teamId-index',
-					KeyConditionExpression: 'teamId = :teamId',
-					ExpressionAttributeValues: { ':teamId': teamId },
-					// We only need to know if at least one member exists
-					Limit: 1,
-					Select: 'COUNT',
-				}),
-			);
-
-			const memberCount = membersResult.Count ?? 0;
-			if (memberCount > 0) {
-				throw new ConflictException(
-					`Cannot delete team "${team.name}": it still has ${memberCount} member(s). Reassign or remove all users first.`,
-				);
+			// 2. Check if team has members
+			const members = await this.usersService.getUsersByTeamId(teamId);
+			if (members.length > 0) {
+				throw new ConflictException(`Cannot delete team ${teamId} because it still has members`);
 			}
+
+
 
 			// 3. Delete the team
 			await this.awsService.dynamoDbDocClient.send(
 				new DeleteCommand({
 					TableName: this.teamsTableName,
-					Key: { id: teamId },
+					Key: { teamId: teamId },
 				}),
 			);
 
