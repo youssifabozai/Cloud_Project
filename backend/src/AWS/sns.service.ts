@@ -23,6 +23,7 @@ export class SnsService {
         priority?: string;
         deadline?: string;
         assignedBy?: string;
+        assignedByUserId?: string;
     }): Promise<void> {
         if (!this.assignmentTopicArn) {
             this.logger.warn('SNS_ASSIGNMENT_TOPIC not configured. Skipping SNS publish.');
@@ -38,6 +39,8 @@ export class SnsService {
             priority: task.priority || 'MEDIUM',
             deadline: task.deadline || '',
             assignedBy: task.assignedBy || 'System',
+            assignedByUserId: task.assignedByUserId || task.assignedBy || 'system',
+            assignedAt: new Date().toISOString(),
             timestamp: new Date().toISOString(),
         };
 

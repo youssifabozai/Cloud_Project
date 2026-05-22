@@ -368,6 +368,7 @@ export class TasksService {
         priority: dto.priority,
         deadline: dto.deadline,
         assignedBy: user.fullName || user.userId,
+        assignedByUserId: user.userId,
       });
     }
 
@@ -503,6 +504,7 @@ export class TasksService {
         priority: dto.priority || existing.priority,
         deadline: dto.deadline || existing.deadline,
         assignedBy: user.fullName || user.userId,
+        assignedByUserId: user.userId,
       });
     }
 
