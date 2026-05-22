@@ -1444,7 +1444,12 @@ export function OrganizationChartView({
         <>
           <AssignTeamModal
             open={isAssignModalOpen}
-            user={selectedUser}
+            user={{
+              userId: selectedUser.userId,
+              email: selectedUser.email,
+              role: selectedUser.role,
+              teamId: selectedUser.teamId ?? undefined,
+            }}
             teams={teams.teams}
             teamsLoading={teams.isLoading}
             teamsError={teams.error}
@@ -1461,7 +1466,12 @@ export function OrganizationChartView({
 
           <ChangeRoleModal
             open={isRoleModalOpen}
-            user={selectedUser}
+            user={{
+              userId: selectedUser.userId,
+              email: selectedUser.email,
+              role: selectedUser.role,
+              teamId: selectedUser.teamId ?? undefined,
+            }}
             isSaving={roleChange.isSaving}
             successMessage={roleChange.result?.message ?? null}
             errorMessage={roleChange.error}
@@ -1474,7 +1484,12 @@ export function OrganizationChartView({
 
           <DeleteUserDialog
             open={isDeleteDialogOpen}
-            user={selectedUser}
+            user={{
+              userId: selectedUser.userId,
+              email: selectedUser.email,
+              role: selectedUser.role,
+              teamId: selectedUser.teamId ?? undefined,
+            }}
             currentUserId={session?.userId}
             isDeleting={userDelete.isDeleting}
             errorMessage={userDelete.error}

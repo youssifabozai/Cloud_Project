@@ -110,8 +110,8 @@ export class ProjectsService {
 					ExclusiveStartKey: lastEvaluatedKey,
 				};
 
-				if (role !== 'ADMIN') {
-					// Employees and Managers only see projects assigned to them
+				if (role !== 'ADMIN' && role !== 'MANAGER') {
+					// Employees only see projects assigned to them
 					// or where they are the manager, or where they created it (for legacy seeds).
 					params.FilterExpression = 'contains(assignedUserIds, :userId) OR managerId = :userId OR createdBy = :userId';
 					params.ExpressionAttributeValues = {
@@ -160,7 +160,7 @@ export class ProjectsService {
 			}
 
 			const role = currentUser.role?.toUpperCase();
-			if (role !== 'ADMIN') {
+			if (role !== 'ADMIN' && role !== 'MANAGER') {
 				const isAssignedUser = project.assignedUserIds?.includes(currentUser.userId);
 				const isAssignedTeam = currentUser.teamId && project.assignedTeamIds?.includes(currentUser.teamId);
 				const isManager = project.managerId === currentUser.userId;

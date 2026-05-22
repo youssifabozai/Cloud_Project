@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { TaskImageUpload } from "@/features/components/task-image-upload";
 import { taskDisplayImageUrl } from "@/features/utils/task-image-upload";
@@ -17,6 +17,7 @@ import {
 import { tasksService } from "@/services/tasks.service";
 import { usersService } from "@/services/users.service";
 import { projectsService } from "@/services/projects.service";
+import { metricsService } from "@/services/metrics.service";
 import { teamsService, type Team } from "@/services/teams.service";
 import { commentsService } from "@/services/comments.service";
 import { auditLogsService } from "@/services/audit-logs.service";
@@ -68,10 +69,12 @@ interface Project {
   projectId: string;
   name: string;
   description: string;
-  status: 'Active' | 'On Hold' | 'Completed';
+  status: 'Active' | 'On Hold' | 'Completed' | 'ACTIVE' | 'COMPLETED';
   deadline: string;
   progress: number;
   managerName: string;
+  assignedUserIds?: string[];
+  assignedTeamIds?: string[];
 }
 
 interface Comment {
@@ -131,8 +134,11 @@ function displayAssignee(task: Task): string {
   return task.assigneeName || task.assigneeId || "Unassigned";
 }
 
+type DashboardTab = 'dashboard' | 'board' | 'projects' | 'teams' | 'activity';
+
 export default function DashboardPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const { pushToast } = useToast();
 
   const auth = useAuth();
@@ -144,6 +150,7 @@ export default function DashboardPage() {
   const [userList, setUserList] = useState<DashboardUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const dashboardDataLoadedFor = useRef<string | null>(null);
 
   const currentUser = useMemo<DashboardUser | null>(() => {
     if (!auth.session) {
@@ -159,7 +166,9 @@ export default function DashboardPage() {
   }, [auth.session, auth.isEmployee]);
 
   // Router view controls
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'board' | 'projects' | 'teams' | 'activity'>('dashboard');
+  const [activeTab, setActiveTab] = useState<DashboardTab>(
+    pathname.endsWith('/dashboard/tasks') ? 'board' : 'dashboard',
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState("All");
 
@@ -169,6 +178,23 @@ export default function DashboardPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [projectActionLoading, setProjectActionLoading] = useState(false);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [metricsSummary, setMetricsSummary] = useState<{
+    totalTasks: number;
+    openTasks: number;
+    closedTasks: number;
+    cpuUtilization: number | null;
+    ec2InstanceIdConfigured?: boolean;
+    averageTimeToCloseHours?: number | null;
+  } | null>(null);
+  const [metricsTimeSeries, setMetricsTimeSeries] = useState<Array<{
+    date: string;
+    created: number;
+    closed: number;
+    closedByTeam?: Record<string, number>;
+  }>>([]);
 
   // New task inputs
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
@@ -265,13 +291,39 @@ export default function DashboardPage() {
     }
   }, [loadTasksFromApi, pushToast]);
 
+  const loadMetricsFromApi = useCallback(async () => {
+    if (!auth.isManager && !auth.isAdmin) {
+      setMetricsSummary(null);
+      setMetricsTimeSeries([]);
+      setMetricsError(null);
+      return;
+    }
+
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      const [summary, timeSeries] = await Promise.all([
+        metricsService.getDashboardSummary(),
+        metricsService.getTimeSeries(),
+      ]);
+      setMetricsSummary(summary);
+      setMetricsTimeSeries(timeSeries);
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "Metrics API did not return dashboard data";
+      setMetricsError(message);
+      pushToast("error", "Metrics unavailable", message);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [auth.isManager, auth.isAdmin, pushToast]);
+
   // Discussion comments
   const [commentText, setCommentText] = useState("");
   const [taskHistory, setTaskHistory] = useState<ActivityLog[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
 
-  // Alarm mock status
-  const [alarmActive, setAlarmActive] = useState(true);
+  // CloudWatch alarm setup is AWS-side proof; this UI does not fake alarm state.
 
   // 1. Session Loader: rely on AuthContext (cookie-based)
   useEffect(() => {
@@ -287,11 +339,25 @@ export default function DashboardPage() {
   }, [auth.isLoading, auth.session, theme, router]);
 
   useEffect(() => {
-    if (!auth.isLoading && auth.session) {
-      void auth.refreshSession();
-      void loadDashboardData();
+    if (auth.isLoading) return;
+    if (!auth.session) {
+      dashboardDataLoadedFor.current = null;
+      return;
     }
-  }, [auth.isLoading, auth.session, auth.refreshSession, loadDashboardData]);
+
+    const sessionKey = auth.session.userId || auth.session.email || 'authenticated';
+    if (dashboardDataLoadedFor.current === sessionKey) return;
+
+    dashboardDataLoadedFor.current = sessionKey;
+    void loadDashboardData();
+    void loadMetricsFromApi();
+  }, [
+    auth.isLoading,
+    auth.session?.userId,
+    auth.session?.email,
+    loadDashboardData,
+    loadMetricsFromApi,
+  ]);
 
   useEffect(() => {
     if (!auth.isLoading && auth.session) {
@@ -464,6 +530,21 @@ export default function DashboardPage() {
     return counts;
   }, [teams, tasks]);
 
+  const closedByTeamFromMetrics = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const point of metricsTimeSeries) {
+      for (const [teamId, count] of Object.entries(point.closedByTeam ?? {})) {
+        counts[teamId] = (counts[teamId] ?? 0) + count;
+      }
+    }
+    return counts;
+  }, [metricsTimeSeries]);
+
+  const recentMetricDays = useMemo(
+    () => metricsTimeSeries.slice(-5),
+    [metricsTimeSeries],
+  );
+
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[var(--bg-primary)] flex items-center justify-center font-bold text-xs text-[var(--text-secondary)]">
@@ -624,6 +705,84 @@ export default function DashboardPage() {
       );
     } finally {
       setIsDeletingTask(false);
+    }
+  };
+
+  const handleCreateProjectFromTab = async () => {
+    if (!isUserLeader) return;
+    const name = window.prompt("Enter Project Name:");
+    if (!name?.trim()) return;
+    const description = window.prompt("Project description (optional):") || "";
+
+    setProjectActionLoading(true);
+    try {
+      const created = await projectsService.create({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        status: "ACTIVE",
+      });
+      setProjects((prev) => [
+        mapApiProject(created as unknown as Record<string, unknown>),
+        ...prev,
+      ]);
+      pushToast("success", "Project created", `"${created.name}" saved to DynamoDB`);
+    } catch (err) {
+      pushToast(
+        "error",
+        "Project create failed",
+        err instanceof Error ? err.message : "Manager/Admin role required",
+      );
+    } finally {
+      setProjectActionLoading(false);
+    }
+  };
+
+  const handleEditProjectFromTab = async (project: Project) => {
+    if (!isUserLeader) return;
+    const name = window.prompt("Project name:", project.name);
+    if (!name?.trim()) return;
+    const description = window.prompt("Project description:", project.description) ?? project.description;
+
+    setProjectActionLoading(true);
+    try {
+      const updated = await projectsService.update(project.projectId, {
+        name: name.trim(),
+        description,
+        status: project.status === "COMPLETED" || project.status === "Completed" ? "COMPLETED" : "ACTIVE",
+      });
+      const mapped = mapApiProject(updated as unknown as Record<string, unknown>);
+      setProjects((prev) =>
+        prev.map((item) => (item.projectId === mapped.projectId ? mapped : item)),
+      );
+      pushToast("success", "Project updated", `"${mapped.name}" saved to DynamoDB`);
+    } catch (err) {
+      pushToast(
+        "error",
+        "Project update failed",
+        err instanceof Error ? err.message : "Manager/Admin role required",
+      );
+    } finally {
+      setProjectActionLoading(false);
+    }
+  };
+
+  const handleDeleteProjectFromTab = async (project: Project) => {
+    if (!isUserLeader) return;
+    if (!window.confirm(`Delete project "${project.name}" from DynamoDB?`)) return;
+
+    setProjectActionLoading(true);
+    try {
+      await projectsService.remove(project.projectId);
+      setProjects((prev) => prev.filter((item) => item.projectId !== project.projectId));
+      pushToast("success", "Project deleted", `"${project.name}" was removed`);
+    } catch (err) {
+      pushToast(
+        "error",
+        "Project delete failed",
+        err instanceof Error ? err.message : "Manager/Admin role required",
+      );
+    } finally {
+      setProjectActionLoading(false);
     }
   };
 
@@ -800,17 +959,13 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* CloudWatch Active Alarm Mock Status */}
+            {/* CloudWatch alarm proof is AWS-side and should not be faked in the UI. */}
             <div
-              onClick={() => setAlarmActive(!alarmActive)}
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border cursor-pointer select-none transition-all ${alarmActive
-                ? "bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-sm animate-pulse"
-                : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                }`}
-              title="Simulates CloudWatch Alarm state on over-due items. Click to toggle state."
+              className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border bg-amber-500/10 text-amber-600 border-amber-500/20"
+              title="CloudWatch alarm setup/proof is not exposed by the current backend API."
             >
               <AlertTriangle className="h-3.5 w-3.5" />
-              <span>{alarmActive ? "CloudWatch: Overdue Threshold Alert" : "AWS Status: Normal"}</span>
+              <span>CloudWatch alarm proof pending</span>
             </div>
           </div>
         </header>
@@ -846,7 +1001,7 @@ export default function DashboardPage() {
                       <span className="text-3xl font-bold mt-1 tracking-tight">{totalTasks}</span>
                       <span className="text-[10px] text-zinc-500 font-semibold flex items-center gap-1 mt-1.5">
                         <TrendingUp className="h-3 w-3 text-emerald-500" />
-                        +3 created today
+                        Backend metrics shown below
                       </span>
                     </div>
                     <div className="p-3.5 rounded-xl bg-blue-500/10 text-blue-500">
@@ -861,7 +1016,7 @@ export default function DashboardPage() {
                       <span className="text-3xl font-bold mt-1 tracking-tight text-blue-500">{inProgressTasks}</span>
                       <span className="text-[10px] text-zinc-500 font-semibold flex items-center gap-1 mt-1.5">
                         <Clock className="h-3 w-3 text-blue-500" />
-                        Avg resolution time: 4.2h
+                        Avg time-to-close shown below
                       </span>
                     </div>
                     <div className="p-3.5 rounded-xl bg-indigo-500/10 text-indigo-500">
@@ -900,17 +1055,98 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {/* Real backend metrics surfaced additively; missing CloudWatch config is shown honestly. */}
+                {isUserLeader && (
+                  <div className="p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-premium flex flex-col gap-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold">Backend Metrics / CloudWatch Signals</h3>
+                        <p className="text-xs text-[var(--text-secondary)]">
+                          Uses protected Metrics API data. Missing AWS-side alarm proof is not simulated.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void loadMetricsFromApi()}
+                        className="px-3 py-1.5 rounded-xl border border-[var(--border-color)] bg-[var(--bg-primary)] text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors"
+                      >
+                        Refresh metrics
+                      </button>
+                    </div>
+
+                    {metricsLoading ? (
+                      <p className="text-xs text-[var(--text-secondary)]">Loading backend metrics...</p>
+                    ) : metricsError ? (
+                      <p className="text-xs text-rose-500">{metricsError}</p>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                        <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)] p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)]">Tasks created per day</p>
+                          {recentMetricDays.length === 0 ? (
+                            <p className="mt-3 text-xs text-[var(--text-tertiary)]">No created-task metric data returned yet.</p>
+                          ) : (
+                            <div className="mt-3 space-y-2">
+                              {recentMetricDays.map((point) => (
+                                <div key={point.date} className="flex items-center justify-between text-xs">
+                                  <span>{point.date}</span>
+                                  <span className="font-bold">{point.created}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)] p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)]">Closed per team</p>
+                          {Object.keys(closedByTeamFromMetrics).length === 0 ? (
+                            <p className="mt-3 text-xs text-[var(--text-tertiary)]">No per-team closed-task data returned yet.</p>
+                          ) : (
+                            <div className="mt-3 space-y-2">
+                              {Object.entries(closedByTeamFromMetrics).map(([teamId, count]) => (
+                                <div key={teamId} className="flex items-center justify-between text-xs">
+                                  <span>{teams.find((t) => t.teamId === teamId)?.name || teamId}</span>
+                                  <span className="font-bold">{count}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)] p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)]">Avg time to close</p>
+                          {metricsSummary?.averageTimeToCloseHours == null ? (
+                            <p className="mt-3 text-xs text-[var(--text-tertiary)]">No closed-task timing data available yet.</p>
+                          ) : (
+                            <p className="mt-3 text-2xl font-bold">{metricsSummary.averageTimeToCloseHours}h</p>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)] p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)]">EC2 CPU</p>
+                          {!metricsSummary?.ec2InstanceIdConfigured ? (
+                            <p className="mt-3 text-xs text-[var(--text-tertiary)]">EC2_INSTANCE_ID is not configured for the Metrics API.</p>
+                          ) : metricsSummary.cpuUtilization == null ? (
+                            <p className="mt-3 text-xs text-[var(--text-tertiary)]">No CloudWatch CPU datapoint returned for the configured instance.</p>
+                          ) : (
+                            <p className="mt-3 text-2xl font-bold">{metricsSummary.cpuUtilization.toFixed(2)}%</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Dashboard Data Charts & Log Split Panel */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Custom animated Chart Column */}
                   <div className="lg:col-span-2 p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-premium flex flex-col gap-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-sm font-bold">CloudWatch: Tasks Assigned Per Team</h3>
-                        <p className="text-xs text-[var(--text-secondary)]">Reflects partition query GSI statistics</p>
+                        <h3 className="text-sm font-bold">Tasks Assigned Per Team</h3>
+                        <p className="text-xs text-[var(--text-secondary)]">Computed from backend task data returned for this user</p>
                       </div>
                       <span className="text-xs font-semibold py-1 px-2.5 rounded-full bg-blue-500/10 text-[var(--primary)] border border-blue-500/10 flex items-center gap-1.5">
-                        <Sparkles className="h-3.5 w-3.5" /> Live
+                        <Sparkles className="h-3.5 w-3.5" /> Backend data
                       </span>
                     </div>
 
@@ -953,7 +1189,7 @@ export default function DashboardPage() {
                   <div className="p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-premium flex flex-col gap-4">
                     <div>
                       <h3 className="text-sm font-bold">Event Log Feed</h3>
-                      <p className="text-xs text-[var(--text-secondary)]">EventBridge & SQS task dispatch actions</p>
+                      <p className="text-xs text-[var(--text-secondary)]">Backend audit log actions</p>
                     </div>
 
                     <div className="flex-1 overflow-y-auto max-h-[260px] pr-1 flex flex-col gap-3">
@@ -1142,28 +1378,24 @@ export default function DashboardPage() {
                   </div>
                   {isUserLeader && (
                     <button
-                      onClick={() => {
-                        const name = prompt("Enter Project Name:");
-                        if (name) {
-                          const newProj: Project = {
-                            projectId: `project-${Date.now()}`,
-                            name: name,
-                            description: "Automated partition storage container",
-                            status: "Active",
-                            deadline: "2026-12-31",
-                            progress: 10,
-                            managerName: currentUser.name
-                          };
-                          setProjects(prev => [...prev, newProj]);
-                        }
-                      }}
-                      className="px-4 py-2 text-xs font-semibold bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white hover:opacity-90 rounded-xl shadow-premium flex items-center gap-2 cursor-pointer transition-opacity"
+                      onClick={() => void handleCreateProjectFromTab()}
+                      disabled={projectActionLoading}
+                      className="px-4 py-2 text-xs font-semibold bg-gradient-to-tr from-[var(--primary)] to-[var(--secondary)] text-white hover:opacity-90 rounded-xl shadow-premium flex items-center gap-2 cursor-pointer transition-opacity disabled:opacity-50"
                     >
-                      <Plus className="h-4 w-4" /> Create AWS Project
+                      <Plus className="h-4 w-4" /> {projectActionLoading ? "Saving..." : "Create AWS Project"}
                     </button>
                   )}
                 </div>
 
+                {dataLoading ? (
+                  <div className="p-8 rounded-2xl border border-dashed border-[var(--border-color)] bg-[var(--bg-secondary)] text-center text-xs text-[var(--text-secondary)]">
+                    Loading projects from DynamoDB...
+                  </div>
+                ) : projects.length === 0 ? (
+                  <div className="p-8 rounded-2xl border border-dashed border-[var(--border-color)] bg-[var(--bg-secondary)] text-center text-xs text-[var(--text-secondary)]">
+                    No projects returned by the Projects API yet.
+                  </div>
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {projects.map((proj) => (
                     <div key={proj.projectId} className="p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-premium hover-lift flex flex-col gap-4">
@@ -1193,11 +1425,33 @@ export default function DashboardPage() {
 
                       <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-4 mt-1 text-[10px] font-semibold text-[var(--text-secondary)]">
                         <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Deadline: {proj.deadline}</span>
-                        <span className="text-blue-500 flex items-center gap-0.5 cursor-pointer hover:underline">View GSI details <ChevronRight className="h-3 w-3" /></span>
+                        {isUserLeader ? (
+                          <span className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={projectActionLoading}
+                              onClick={() => void handleEditProjectFromTab(proj)}
+                              className="text-blue-500 hover:underline disabled:opacity-50"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              disabled={projectActionLoading}
+                              onClick={() => void handleDeleteProjectFromTab(proj)}
+                              className="text-rose-500 hover:underline disabled:opacity-50"
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="text-[var(--text-tertiary)]">Read-only</span>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             )}
 

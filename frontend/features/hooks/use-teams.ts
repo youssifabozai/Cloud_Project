@@ -25,7 +25,7 @@ export function useTeams(): UseTeamsState {
 
     try {
       const response = await teamsService.getAll();
-      setTeams(response.data ?? []);
+      setTeams(response);
     } catch (err) {
       const normalized = normalizeApiError(err);
       setTeams([]);

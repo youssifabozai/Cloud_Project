@@ -50,35 +50,58 @@ export class MetricsService {
       }
     }
 
-    let cpuUtilization = 0;
-    try {
-      // Fetch average CPU utilization for the last hour
-      const endTime = new Date();
-      const startTime = new Date(endTime.getTime() - 60 * 60 * 1000); // 1 hour ago
-      
-      const metricCommand = new GetMetricStatisticsCommand({
-        Namespace: 'AWS/EC2',
-        MetricName: 'CPUUtilization',
-        Dimensions: [
-          {
-            Name: 'InstanceId',
-            Value: this.configService.get<string>('EC2_INSTANCE_ID') || 'i-placeholder',
-          },
-        ],
-        StartTime: startTime,
-        EndTime: endTime,
-        Period: 3600,
-        Statistics: ['Average'],
-      });
+    let cpuUtilization: number | null = null;
+    const ec2InstanceId = this.configService.get<string>('EC2_INSTANCE_ID')?.trim();
+    if (ec2InstanceId) {
+      try {
+        // Fetch average CPU utilization for the last hour.
+        const endTime = new Date();
+        const startTime = new Date(endTime.getTime() - 60 * 60 * 1000);
 
-      const metricResult = await this.awsService.cloudWatchClient.send(metricCommand);
-      if (metricResult.Datapoints && metricResult.Datapoints.length > 0) {
-        cpuUtilization = metricResult.Datapoints[0].Average || 0;
+        const metricCommand = new GetMetricStatisticsCommand({
+          Namespace: 'AWS/EC2',
+          MetricName: 'CPUUtilization',
+          Dimensions: [
+            {
+              Name: 'InstanceId',
+              Value: ec2InstanceId,
+            },
+          ],
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: 3600,
+          Statistics: ['Average'],
+        });
+
+        const metricResult = await this.awsService.cloudWatchClient.send(metricCommand);
+        if (metricResult.Datapoints && metricResult.Datapoints.length > 0) {
+          cpuUtilization = metricResult.Datapoints[0].Average || 0;
+        }
+      } catch (error) {
+        this.logger.error('Failed to fetch CloudWatch metrics', error);
+        // Fail gracefully if permissions or instance ID are missing.
       }
-    } catch (error) {
-      this.logger.error('Failed to fetch CloudWatch metrics', error);
-      // Fail gracefully if permissions or instance ID are missing
     }
+
+    const closedDurations = tasks
+      .filter((task) => {
+        const s = task.status?.toLowerCase();
+        return (s === 'done' || s === 'closed') && task.createdAt && (task.closedAt || task.updatedAt);
+      })
+      .map((task) => {
+        const createdMs = Date.parse(task.createdAt);
+        const closedMs = Date.parse(task.closedAt || task.updatedAt);
+        if (!Number.isFinite(createdMs) || !Number.isFinite(closedMs)) {
+          return null;
+        }
+        return Math.max(0, (closedMs - createdMs) / (1000 * 60 * 60));
+      })
+      .filter((value): value is number => value !== null);
+
+    const averageTimeToCloseHours =
+      closedDurations.length > 0
+        ? closedDurations.reduce((sum, value) => sum + value, 0) / closedDurations.length
+        : null;
 
     return {
       success: true,
@@ -86,20 +109,26 @@ export class MetricsService {
         totalTasks,
         openTasks,
         closedTasks,
-        cpuUtilization: parseFloat(cpuUtilization.toFixed(2)),
+        cpuUtilization:
+          cpuUtilization === null ? null : parseFloat(cpuUtilization.toFixed(2)),
+        ec2InstanceIdConfigured: Boolean(ec2InstanceId),
+        averageTimeToCloseHours:
+          averageTimeToCloseHours === null
+            ? null
+            : parseFloat(averageTimeToCloseHours.toFixed(2)),
       },
     };
   }
 
   async getTimeSeries() {
     const tasks = await this.fetchAllTasks();
-    const timeSeriesData: Record<string, { created: number; closed: number }> = {};
+    const timeSeriesData: Record<string, { created: number; closed: number; closedByTeam: Record<string, number> }> = {};
 
     for (const task of tasks) {
       // Group by YYYY-MM-DD
       const createdDate = task.createdAt ? new Date(task.createdAt).toISOString().split('T')[0] : 'Unknown';
       if (!timeSeriesData[createdDate]) {
-        timeSeriesData[createdDate] = { created: 0, closed: 0 };
+        timeSeriesData[createdDate] = { created: 0, closed: 0, closedByTeam: {} };
       }
       timeSeriesData[createdDate].created++;
 
@@ -107,9 +136,12 @@ export class MetricsService {
       if (s === 'done' || s === 'closed') {
         const closedDate = task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : createdDate;
         if (!timeSeriesData[closedDate]) {
-          timeSeriesData[closedDate] = { created: 0, closed: 0 };
+          timeSeriesData[closedDate] = { created: 0, closed: 0, closedByTeam: {} };
         }
         timeSeriesData[closedDate].closed++;
+        const teamId = task.teamId || 'Unassigned';
+        timeSeriesData[closedDate].closedByTeam[teamId] =
+          (timeSeriesData[closedDate].closedByTeam[teamId] || 0) + 1;
       }
     }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { Suspense, useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'framer-motion';
 
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -56,7 +56,7 @@ function TeamLookupForm({
   );
 }
 
-export default function TeamMembersPage() {
+function TeamMembersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { session } = useUserSession();
@@ -173,5 +173,13 @@ export default function TeamMembersPage() {
         </div>
       </div>
     </ProtectedLayout>
+  );
+}
+
+export default function TeamMembersPage() {
+  return (
+    <Suspense fallback={null}>
+      <TeamMembersContent />
+    </Suspense>
   );
 }

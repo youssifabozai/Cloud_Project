@@ -7,7 +7,7 @@ export type UserRole      = 'MANAGER' | 'EMPLOYEE' | 'ADMIN';
 export type AppMode = 'api';
 export type TaskStatus    = 'To Do' | 'In Progress' | 'In Review' | 'Done';
 export type TaskPriority  = 'Low' | 'Medium' | 'High' | 'Urgent';
-export type ProjectStatus = 'Active' | 'On Hold' | 'Completed';
+export type ProjectStatus = 'Active' | 'On Hold' | 'Completed' | 'ACTIVE' | 'COMPLETED';
 export type ActivityType  = 'STATUS_CHANGED' | 'CREATED' | 'ASSIGNED' | 'COMMENTED' | 'DELETED';
 
 // ─── Session ──────────────────────────────────────────────────
@@ -55,12 +55,18 @@ export interface PresignedUploadResponse {
 export interface Project {
   projectId:   string;
   name:        string;
-  description: string;
-  status:      ProjectStatus;
-  deadline:    string;
-  progress:    number;
-  managerName: string;
+  description?: string;
+  status?:      ProjectStatus;
+  deadline?:    string | null;
+  progress?:    number;
+  managerName?: string;
+  managerId?: string;
+  createdById?: string;
+  createdBy?: string;
+  assignedUserIds?: string[];
+  assignedTeamIds?: string[];
   createdAt?:  string;
+  updatedAt?:  string;
 }
 
 export interface Comment {
@@ -171,8 +177,11 @@ export interface UpdateTaskStatusDto {
 
 export interface CreateProjectDto {
   name:        string;
-  description: string;
-  deadline:    string;
+  description?: string;
+  deadline?:    string;
+  status?:      ProjectStatus;
+  assignedUserIds?: string[];
+  assignedTeamIds?: string[];
 }
 
 export interface UpdateProjectDto {
@@ -180,6 +189,8 @@ export interface UpdateProjectDto {
   description?: string;
   deadline?:    string;
   status?:      ProjectStatus;
+  assignedUserIds?: string[];
+  assignedTeamIds?: string[];
 }
 
 export interface UpdateProfileDto {

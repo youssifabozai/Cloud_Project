@@ -8,7 +8,9 @@ import type { UserSessionState } from '../types/user.types';
 import { getSessionAccessReason } from '../utils/route-protection';
 import { getStoredAccessToken, logoutUserSession, mapCurrentUserToSession } from '../utils/session';
 
-function buildUnauthorizedState(reason: UserSessionState['reason'], error?: string): UserSessionState {
+type SessionAccessReason = 'missing_token' | 'expired_token' | 'forbidden_access';
+
+function buildUnauthorizedState(reason: SessionAccessReason, error?: string): UserSessionState {
   return {
     status: reason === 'forbidden_access' ? 'forbidden' : 'unauthorized',
     session: null,
@@ -45,7 +47,7 @@ export function useUserSession() {
         await logoutUserSession();
       }
 
-      setState(buildUnauthorizedState(reason, normalizedError.message));
+      setState(buildUnauthorizedState(reason === 'unknown' ? 'missing_token' : reason, normalizedError.message));
     }
   }, []);
 
