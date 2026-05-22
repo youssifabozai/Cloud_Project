@@ -14,9 +14,11 @@ Below is the detailed AWS architecture diagram showing the high-availability set
 
 > **Interactive Version:** Open [`mini_jira_aws_architecture.html`](./mini_jira_aws_architecture.html) in your browser for an interactive, zoomable version of this diagram.
 
+[![Mini-Jira AWS Architecture Diagram](./mini_jira_aws_architecture.svg)](./mini_jira_aws_architecture.html)
+
 ## Deliverables
 
-- **Architecture Diagram:** `[Insert link or image to the detailed AWS architecture diagram here]`
+- **Architecture Diagram:** [`mini_jira_aws_architecture.html`](./mini_jira_aws_architecture.html) (interactive) / [`mini_jira_aws_architecture.svg`](./mini_jira_aws_architecture.svg) (preview)
 - **Live Application URL:** `[Insert CloudFront Distribution URL here]`
 - **Demo Video:** `[Insert Demo Video Link here]`
 

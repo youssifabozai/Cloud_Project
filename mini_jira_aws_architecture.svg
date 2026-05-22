@@ -1,0 +1,594 @@
+﻿<svg viewBox="0 0 1400 1900" xmlns="http://www.w3.org/2000/svg" role="img">
+<style>
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: transparent; font-family: "Anthropic Sans", sans-serif; }
+svg { width: 100%; height: auto; display: block; }
+.label-title { font-size: 11px; font-weight: 500; fill: var(--color-text-primary, #1a1a1a); }
+.label-sub { font-size: 9px; font-weight: 400; fill: var(--color-text-secondary, #555); }
+.label-note { font-size: 8px; font-weight: 400; fill: var(--color-text-secondary, #666); font-style: italic; }
+.section-label { font-size: 10px; font-weight: 500; fill: var(--color-text-secondary, #666); text-transform: uppercase; letter-spacing: 0.5px; }
+.arr { stroke: #888; stroke-width: 1.2; fill: none; }
+.arr-blue { stroke: #378ADD; stroke-width: 1.2; fill: none; }
+.arr-orange { stroke: #BA7517; stroke-width: 1.4; fill: none; }
+.arr-green { stroke: #3B6D11; stroke-width: 1.2; fill: none; }
+.arr-purple { stroke: #534AB7; stroke-width: 1.2; fill: none; }
+.arr-red { stroke: #A32D2D; stroke-width: 1.2; fill: none; }
+.arr-teal { stroke: #0F6E56; stroke-width: 1.2; fill: none; }
+.arr-dot { stroke: #888; stroke-width: 1; fill: none; stroke-dasharray: 3 3; }
+.vpc-bg { fill: #EEF6FF; stroke: #378ADD; stroke-width: 1.5; stroke-dasharray: 6 3; }
+.az-bg { fill: #F4FAF7; stroke: #1D9E75; stroke-width: 1; stroke-dasharray: 4 3; }
+.subnet-pub { fill: #FFFDE8; stroke: #BA7517; stroke-width: 0.8; }
+.subnet-priv { fill: #F0F0FF; stroke: #7F77DD; stroke-width: 0.8; }
+.cw-bg { fill: #FFF8F0; stroke: #EF9F27; stroke-width: 1.2; stroke-dasharray: 5 3; }
+.iam-bg { fill: #FFF0F0; stroke: #D85A30; stroke-width: 1; stroke-dasharray: 4 2; }
+.svc-box { rx: 6; ry: 6; }
+@media (prefers-color-scheme: dark) {
+  .label-title { fill: #e2e0d6; }
+  .label-sub { fill: #a0a09a; }
+  .label-note { fill: #888; }
+  .section-label { fill: #a0a09a; }
+  .vpc-bg { fill: #0d1f30; stroke: #185FA5; }
+  .az-bg { fill: #0d2018; stroke: #0F6E56; }
+  .subnet-pub { fill: #201e00; stroke: #854F0B; }
+  .subnet-priv { fill: #10102a; stroke: #3C3489; }
+  .cw-bg { fill: #1f1500; stroke: #BA7517; }
+  .iam-bg { fill: #1f0b0b; stroke: #993C1D; }
+}
+
+</style>
+
+<title>Mini-Jira AWS Architecture Diagram</title>
+<desc>High-availability AWS architecture for Mini-Jira task management app spanning two availability zones with Cognito auth, CloudFront CDN, ALB, EC2, DynamoDB, S3, Lambda, SNS, SQS, EventBridge, CloudWatch, and IAM.</desc>
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arr-dot" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- BACKGROUND: VPC -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<rect class="vpc-bg" x="360" y="235" width="900" height="680" rx="14"/>
+<text class="section-label" x="375" y="256">AWS VPC</text>
+
+<!-- AZ1 -->
+<rect class="az-bg" x="375" y="265" width="410" height="640" rx="10"/>
+<text class="section-label" x="388" y="284">Availability Zone 1</text>
+
+<!-- AZ2 -->
+<rect class="az-bg" x="835" y="265" width="410" height="640" rx="10"/>
+<text class="section-label" x="848" y="284">Availability Zone 2</text>
+
+<!-- Public subnets -->
+<rect class="subnet-pub" x="390" y="292" width="380" height="160" rx="7"/>
+<text class="section-label" x="402" y="308" style="font-size:9px">Public Subnet AZ1</text>
+
+<rect class="subnet-pub" x="850" y="292" width="380" height="160" rx="7"/>
+<text class="section-label" x="862" y="308" style="font-size:9px">Public Subnet AZ2</text>
+
+<!-- Private subnets -->
+<rect class="subnet-priv" x="390" y="470" width="380" height="420" rx="7"/>
+<text class="section-label" x="402" y="488" style="font-size:9px">Private Subnet AZ1</text>
+
+<rect class="subnet-priv" x="850" y="470" width="380" height="420" rx="7"/>
+<text class="section-label" x="862" y="488" style="font-size:9px">Private Subnet AZ2</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- USERS (top left) -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- Manager user -->
+<g>
+  <!-- Person icon: circle head + body arc -->
+  <circle cx="72" cy="72" r="14" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+  <path d="M52 105 Q72 85 92 105" fill="#B5D4F4" stroke="#185FA5" stroke-width="1.2"/>
+  <text class="label-title" x="72" y="125" text-anchor="middle">Manager</text>
+</g>
+<!-- Employee user -->
+<g>
+  <circle cx="72" cy="158" r="14" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1.5"/>
+  <path d="M52 191 Q72 171 92 191" fill="#C0DD97" stroke="#3B6D11" stroke-width="1.2"/>
+  <text class="label-title" x="72" y="211" text-anchor="middle">Employee</text>
+</g>
+<text class="label-sub" x="72" y="230" text-anchor="middle">Users</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- COGNITO -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<g>
+  <rect x="170" y="50" width="130" height="62" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.3"/>
+  <!-- Cognito icon: shield shape simplified -->
+  <path d="M214 62 L226 58 L238 62 L238 78 L226 86 L214 78 Z" fill="#7F77DD" stroke="none"/>
+  <path d="M222 71 L225 74 L231 67" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <text class="label-title" x="235" y="85" text-anchor="middle" style="font-size:10px">Amazon Cognito</text>
+  <text class="label-sub" x="235" y="97" text-anchor="middle">User Pool</text>
+  <text class="label-note" x="235" y="107" text-anchor="middle">role + teamId attrs</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- CLOUDFRONT -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<g>
+  <rect x="170" y="150" width="130" height="58" rx="7" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.3"/>
+  <!-- CloudFront icon: globe-like rings -->
+  <ellipse cx="210" cy="179" rx="14" ry="14" fill="#1D9E75" stroke="none"/>
+  <ellipse cx="210" cy="179" rx="14" ry="7" fill="none" stroke="white" stroke-width="1"/>
+  <line x1="210" y1="165" x2="210" y2="193" stroke="white" stroke-width="1"/>
+  <text class="label-title" x="240" y="175" text-anchor="middle" style="font-size:10px">Amazon</text>
+  <text class="label-title" x="240" y="187" text-anchor="middle" style="font-size:10px">CloudFront</text>
+  <text class="label-sub" x="240" y="199" text-anchor="middle">CDN</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- ALB (spanning both public subnets) -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<g>
+  <rect x="510" y="310" width="600" height="55" rx="7" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.5"/>
+  <!-- ALB icon: load balancer arrows -->
+  <rect x="524" y="323" width="28" height="18" rx="3" fill="#EF9F27"/>
+  <line x1="538" y1="323" x2="528" y2="312" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="538" y1="323" x2="548" y2="312" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="538" y1="341" x2="532" y2="352" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="538" y1="341" x2="544" y2="352" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text class="label-title" x="810" y="332" text-anchor="middle">Application Load Balancer (ALB)</text>
+  <text class="label-sub" x="810" y="348" text-anchor="middle">Spans both public subnets across AZ1 + AZ2</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- NAT GATEWAYS -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- NAT GW AZ1 -->
+<g>
+  <rect x="405" y="380" width="110" height="52" rx="7" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.2"/>
+  <path d="M422 392 L422 416 L432 416" fill="none" stroke="#EF9F27" stroke-width="1.5"/>
+  <circle cx="440" cy="406" r="10" fill="#EF9F27"/>
+  <text class="label-title" x="460" y="401" style="font-size:9px">NAT Gateway</text>
+  <text class="label-sub" x="460" y="413" style="font-size:8px">AZ1 â€” outbound</text>
+</g>
+<!-- NAT GW AZ2 -->
+<g>
+  <rect x="865" y="380" width="110" height="52" rx="7" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.2"/>
+  <path d="M882 392 L882 416 L892 416" fill="none" stroke="#EF9F27" stroke-width="1.5"/>
+  <circle cx="900" cy="406" r="10" fill="#EF9F27"/>
+  <text class="label-title" x="920" y="401" style="font-size:9px">NAT Gateway</text>
+  <text class="label-sub" x="920" y="413" style="font-size:8px">AZ2 â€” outbound</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- EC2 INSTANCES (private subnets) -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- EC2 AZ1 -->
+<g>
+  <rect x="405" y="510" width="120" height="65" rx="7" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.3"/>
+  <!-- EC2 icon: server -->
+  <rect x="416" y="521" width="22" height="16" rx="2" fill="#378ADD"/>
+  <rect x="416" y="541" width="22" height="6" rx="1" fill="#B5D4F4"/>
+  <circle cx="424" cy="524" r="2" fill="white"/>
+  <text class="label-title" x="450" y="530" style="font-size:10px">EC2 Instance</text>
+  <text class="label-sub" x="450" y="542" style="font-size:9px">Node.js backend</text>
+  <text class="label-sub" x="450" y="554" style="font-size:9px">AZ1 â€” private</text>
+  <text class="label-note" x="450" y="566" style="font-size:8px">Port 3000</text>
+</g>
+<!-- EC2 AZ2 -->
+<g>
+  <rect x="865" y="510" width="120" height="65" rx="7" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.3"/>
+  <rect x="876" y="521" width="22" height="16" rx="2" fill="#378ADD"/>
+  <rect x="876" y="541" width="22" height="6" rx="1" fill="#B5D4F4"/>
+  <circle cx="884" cy="524" r="2" fill="white"/>
+  <text class="label-title" x="910" y="530" style="font-size:10px">EC2 Instance</text>
+  <text class="label-sub" x="910" y="542" style="font-size:9px">Node.js backend</text>
+  <text class="label-sub" x="910" y="554" style="font-size:9px">AZ2 â€” private</text>
+  <text class="label-note" x="910" y="566" style="font-size:8px">Port 3000</text>
+</g>
+
+<!-- AUTO SCALING GROUP bracket -->
+<rect x="392" y="495" width="880" height="100" rx="10" fill="none" stroke="#1D9E75" stroke-width="1.5" stroke-dasharray="7 4"/>
+<text class="section-label" x="834" y="492" text-anchor="middle" style="font-size:9px;fill:#1D9E75">Auto Scaling Group â€” spans AZ1 + AZ2</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- DATA LAYER â€” DYNAMODB TABLES -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- DynamoDB group background -->
+<rect x="362" y="630" width="900" height="100" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1" stroke-dasharray="5 3"/>
+<text class="section-label" x="810" y="647" text-anchor="middle" style="fill:#085041">DynamoDB Tables</text>
+
+<!-- 5 tables -->
+<!-- Users table -->
+<g>
+  <rect x="376" y="656" width="88" height="60" rx="6" fill="white" stroke="#0F6E56" stroke-width="1.2"/>
+  <rect x="376" y="656" width="88" height="18" rx="6" fill="#1D9E75"/>
+  <rect x="376" y="668" width="88" height="6" fill="#1D9E75"/>
+  <text x="420" y="668" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Users</text>
+  <text class="label-note" x="420" y="686">userId PK</text>
+  <text class="label-note" x="420" y="697">email, role</text>
+  <text class="label-note" x="420" y="708">teamId</text>
+</g>
+<!-- Teams table -->
+<g>
+  <rect x="476" y="656" width="88" height="60" rx="6" fill="white" stroke="#0F6E56" stroke-width="1.2"/>
+  <rect x="476" y="656" width="88" height="18" rx="6" fill="#1D9E75"/>
+  <rect x="476" y="668" width="88" height="6" fill="#1D9E75"/>
+  <text x="520" y="668" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Teams</text>
+  <text class="label-note" x="520" y="686">teamId PK</text>
+  <text class="label-note" x="520" y="697">name</text>
+  <text class="label-note" x="520" y="708">members[]</text>
+</g>
+<!-- Projects table -->
+<g>
+  <rect x="576" y="656" width="88" height="60" rx="6" fill="white" stroke="#0F6E56" stroke-width="1.2"/>
+  <rect x="576" y="656" width="88" height="18" rx="6" fill="#1D9E75"/>
+  <rect x="576" y="668" width="88" height="6" fill="#1D9E75"/>
+  <text x="620" y="668" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Projects</text>
+  <text class="label-note" x="620" y="686">projectId PK</text>
+  <text class="label-note" x="620" y="697">teamId, name</text>
+  <text class="label-note" x="620" y="708">status</text>
+</g>
+<!-- Tasks table (with GSI note) -->
+<g>
+  <rect x="676" y="651" width="110" height="70" rx="6" fill="white" stroke="#D85A30" stroke-width="1.5"/>
+  <rect x="676" y="651" width="110" height="18" rx="6" fill="#D85A30"/>
+  <rect x="676" y="663" width="110" height="6" fill="#D85A30"/>
+  <text x="731" y="663" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Tasks â˜…</text>
+  <text class="label-note" x="731" y="682">taskId PK</text>
+  <text class="label-note" x="731" y="693">GSI: teamId</text>
+  <text class="label-note" x="731" y="704">GSI: assigneeId</text>
+  <text class="label-note" x="731" y="715" style="fill:#D85A30">â˜… GSIs on teamId+assigneeId</text>
+</g>
+<!-- Comments table -->
+<g>
+  <rect x="800" y="656" width="88" height="60" rx="6" fill="white" stroke="#0F6E56" stroke-width="1.2"/>
+  <rect x="800" y="656" width="88" height="18" rx="6" fill="#1D9E75"/>
+  <rect x="800" y="668" width="88" height="6" fill="#1D9E75"/>
+  <text x="844" y="668" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Comments</text>
+  <text class="label-note" x="844" y="686">commentId PK</text>
+  <text class="label-note" x="844" y="697">taskId SK</text>
+  <text class="label-note" x="844" y="708">userId, body</text>
+</g>
+<!-- Activity Log table -->
+<g>
+  <rect x="902" y="656" width="105" height="60" rx="6" fill="white" stroke="#534AB7" stroke-width="1.2"/>
+  <rect x="902" y="656" width="105" height="18" rx="6" fill="#7F77DD"/>
+  <rect x="902" y="668" width="105" height="6" fill="#7F77DD"/>
+  <text x="954" y="668" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Activity Log</text>
+  <text class="label-note" x="954" y="686">logId PK</text>
+  <text class="label-note" x="954" y="697">teamId, event</text>
+  <text class="label-note" x="954" y="708">written by Lambda</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- IMAGE PIPELINE -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- S3 Originals bucket -->
+<g>
+  <rect x="80" y="770" width="145" height="75" rx="7" fill="#FAEEDA" stroke="#854F0B" stroke-width="1.3"/>
+  <!-- S3 icon: cylinder -->
+  <ellipse cx="118" cy="790" rx="16" ry="6" fill="#EF9F27"/>
+  <rect x="102" y="790" width="32" height="28" fill="#EF9F27"/>
+  <ellipse cx="118" cy="818" rx="16" ry="6" fill="#BA7517"/>
+  <text class="label-title" x="147" y="789" style="font-size:10px">S3 Bucket</text>
+  <text class="label-sub" x="147" y="801" style="font-size:9px">Originals</text>
+  <text class="label-note" x="147" y="812">Raw uploads</text>
+  <text class="label-note" x="147" y="823">Versioning ON</text>
+  <text class="label-note" x="147" y="834" style="fill:#854F0B">Old versions retained</text>
+</g>
+<!-- Lambda Image Resize -->
+<g>
+  <rect x="80" y="880" width="145" height="62" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.3"/>
+  <!-- Lambda icon: Î» -->
+  <rect x="92" y="890" width="32" height="32" rx="5" fill="#7F77DD"/>
+  <text x="108" y="913" text-anchor="middle" style="font-size:16px;fill:white;font-weight:500">Î»</text>
+  <text class="label-title" x="140" y="898" style="font-size:10px">Image Resize</text>
+  <text class="label-sub" x="140" y="910" style="font-size:9px">Lambda</text>
+  <text class="label-note" x="140" y="921">Trigger: S3 event</text>
+  <text class="label-note" x="140" y="932">sharp / jimp</text>
+</g>
+<!-- S3 Resized bucket -->
+<g>
+  <rect x="80" y="978" width="145" height="62" rx="7" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1.3"/>
+  <ellipse cx="118" cy="998" rx="16" ry="6" fill="#639922"/>
+  <rect x="102" y="998" width="32" height="22" fill="#639922"/>
+  <ellipse cx="118" cy="1020" rx="16" ry="6" fill="#3B6D11"/>
+  <text class="label-title" x="147" y="997" style="font-size:10px">S3 Bucket</text>
+  <text class="label-sub" x="147" y="1009" style="font-size:9px">Resized</text>
+  <text class="label-note" x="147" y="1020">Thumbnails</text>
+  <text class="label-note" x="147" y="1031">CloudFront origin</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- SNS / SQS / NOTIFICATIONS -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- SNS Topic -->
+<g>
+  <rect x="405" y="775" width="145" height="62" rx="7" fill="#FCEBEB" stroke="#A32D2D" stroke-width="1.3"/>
+  <!-- SNS icon: megaphone simplified -->
+  <circle cx="434" cy="806" r="14" fill="#E24B4A"/>
+  <path d="M426 799 L442 806 L426 813 Z" fill="white"/>
+  <text class="label-title" x="472" y="799" style="font-size:10px">Amazon SNS</text>
+  <text class="label-sub" x="472" y="811" style="font-size:9px">TaskAssigned Topic</text>
+  <text class="label-note" x="472" y="822">Fan-out: email + SQS</text>
+</g>
+<!-- Email subscription -->
+<g>
+  <rect x="405" y="875" width="110" height="52" rx="7" fill="#FCEBEB" stroke="#A32D2D" stroke-width="1"/>
+  <rect x="415" y="885" width="30" height="22" rx="3" fill="#E24B4A"/>
+  <path d="M415 885 L430 897 L445 885" fill="none" stroke="white" stroke-width="1.2"/>
+  <text class="label-title" x="458" y="897" style="font-size:9px">Email</text>
+  <text class="label-sub" x="458" y="909" style="font-size:9px">Subscription</text>
+  <text class="label-note" x="458" y="920">â†’ assignee</text>
+</g>
+<!-- SQS Queue -->
+<g>
+  <rect x="560" y="875" width="120" height="52" rx="7" fill="#FAEEDA" stroke="#854F0B" stroke-width="1.3"/>
+  <!-- SQS icon: queue lines -->
+  <rect x="570" y="887" width="30" height="7" rx="2" fill="#EF9F27"/>
+  <rect x="570" y="898" width="24" height="7" rx="2" fill="#BA7517"/>
+  <rect x="570" y="909" width="27" height="7" rx="2" fill="#EF9F27"/>
+  <text class="label-title" x="617" y="897" style="font-size:10px">Amazon SQS</text>
+  <text class="label-sub" x="617" y="909" style="font-size:9px">Assignment Queue</text>
+</g>
+<!-- Assignment Worker Lambda -->
+<g>
+  <rect x="560" y="960" width="145" height="65" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.3"/>
+  <rect x="572" y="970" width="32" height="32" rx="5" fill="#7F77DD"/>
+  <text x="588" y="993" text-anchor="middle" style="font-size:16px;fill:white;font-weight:500">Î»</text>
+  <text class="label-title" x="620" y="979" style="font-size:10px">Assignment Worker</text>
+  <text class="label-sub" x="620" y="991" style="font-size:9px">Lambda</text>
+  <text class="label-note" x="620" y="1002">Write activity log</text>
+  <text class="label-note" x="620" y="1013">Push CW metrics</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- EVENTBRIDGE + DAILY DIGEST -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- EventBridge -->
+<g>
+  <rect x="760" y="775" width="160" height="62" rx="7" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.3"/>
+  <!-- EB icon: bus/event shape -->
+  <rect x="770" y="787" width="36" height="22" rx="4" fill="#EF9F27"/>
+  <circle cx="776" cy="817" r="4" fill="#BA7517"/>
+  <circle cx="800" cy="817" r="4" fill="#BA7517"/>
+  <text class="label-title" x="820" y="793" style="font-size:10px">Amazon</text>
+  <text class="label-title" x="820" y="805" style="font-size:10px">EventBridge</text>
+  <text class="label-sub" x="820" y="817" style="font-size:9px">Daily 9:00 AM cron</text>
+  <text class="label-note" x="820" y="829" style="fill:#854F0B">rate(0 9 * * ? *)</text>
+</g>
+<!-- Daily Digest Lambda -->
+<g>
+  <rect x="780" y="875" width="145" height="62" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.3"/>
+  <rect x="792" y="885" width="32" height="32" rx="5" fill="#7F77DD"/>
+  <text x="808" y="908" text-anchor="middle" style="font-size:16px;fill:white;font-weight:500">Î»</text>
+  <text class="label-title" x="840" y="895" style="font-size:10px">Daily Digest</text>
+  <text class="label-sub" x="840" y="907" style="font-size:9px">Lambda</text>
+  <text class="label-note" x="840" y="918">Scan due tasks</text>
+  <text class="label-note" x="840" y="929">Send digest email</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- CLOUDWATCH SECTION -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<rect class="cw-bg" x="362" y="1080" width="900" height="360" rx="14"/>
+<text class="section-label" x="812" y="1100" text-anchor="middle" style="font-size:11px;fill:#633806">Amazon CloudWatch</text>
+
+<!-- CW Dashboard -->
+<g>
+  <rect x="380" y="1112" width="210" height="100" rx="7" fill="white" stroke="#EF9F27" stroke-width="1.2"/>
+  <rect x="380" y="1112" width="210" height="22" rx="7" fill="#EF9F27"/>
+  <rect x="380" y="1128" width="210" height="6" fill="#EF9F27"/>
+  <text x="485" y="1128" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">CloudWatch Dashboard</text>
+  <text class="label-note" x="390" y="1150">ðŸ“Š Tasks Created per Day</text>
+  <text class="label-note" x="390" y="1163">ðŸ“Š Tasks Closed / Day / Team</text>
+  <text class="label-note" x="390" y="1176">ðŸ“Š Average Time-to-Close</text>
+  <text class="label-note" x="390" y="1189">ðŸ“Š EC2 CPU Utilization</text>
+  <text class="label-note" x="390" y="1202" style="fill:#BA7517">4 widgets</text>
+</g>
+
+<!-- CW Alarms -->
+<g>
+  <rect x="610" y="1112" width="180" height="100" rx="7" fill="white" stroke="#E24B4A" stroke-width="1.2"/>
+  <rect x="610" y="1112" width="180" height="22" rx="7" fill="#E24B4A"/>
+  <rect x="610" y="1128" width="180" height="6" fill="#E24B4A"/>
+  <text x="700" y="1128" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">CloudWatch Alarm</text>
+  <!-- Bell icon -->
+  <path d="M624 1148 Q624 1140 634 1140 Q644 1140 644 1148 L644 1160 L624 1160 Z" fill="#F09595" stroke="#E24B4A" stroke-width="0.8"/>
+  <ellipse cx="634" cy="1163" rx="4" ry="2.5" fill="#A32D2D"/>
+  <text class="label-note" x="652" y="1149">Overdue Tasks</text>
+  <text class="label-note" x="652" y="1161">&gt; Threshold</text>
+  <text class="label-note" x="652" y="1172">â†’ triggers SNS</text>
+  <text class="label-note" x="652" y="1183">alarm notification</text>
+</g>
+
+<!-- CW Custom Metrics -->
+<g>
+  <rect x="800" y="1112" width="175" height="100" rx="7" fill="white" stroke="#EF9F27" stroke-width="1.2"/>
+  <rect x="800" y="1112" width="175" height="22" rx="7" fill="#EF9F27"/>
+  <rect x="800" y="1128" width="175" height="6" fill="#EF9F27"/>
+  <text x="887" y="1128" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">Custom Metrics</text>
+  <!-- chart bars -->
+  <rect x="812" y="1160" width="8" height="20" rx="1" fill="#EF9F27"/>
+  <rect x="823" y="1152" width="8" height="28" rx="1" fill="#BA7517"/>
+  <rect x="834" y="1156" width="8" height="24" rx="1" fill="#EF9F27"/>
+  <text class="label-note" x="852" y="1152">TasksAssignedPerTeam</text>
+  <text class="label-note" x="852" y="1163">From Worker Lambda</text>
+  <text class="label-note" x="852" y="1174">From EC2 instances</text>
+  <text class="label-note" x="852" y="1185">custom namespaces</text>
+</g>
+
+<!-- CW Logs -->
+<g>
+  <rect x="380" y="1230" width="595" height="90" rx="7" fill="white" stroke="#EF9F27" stroke-width="1.2"/>
+  <rect x="380" y="1230" width="595" height="22" rx="7" fill="#633806"/>
+  <rect x="380" y="1246" width="595" height="6" fill="#633806"/>
+  <text x="677" y="1246" text-anchor="middle" style="font-size:9px;font-weight:500;fill:white">CloudWatch Logs â€” receives logs from all Lambda functions + EC2 instances</text>
+  <!-- Log lines -->
+  <rect x="392" y="1258" width="120" height="6" rx="2" fill="#FAEEDA"/>
+  <rect x="392" y="1268" width="100" height="6" rx="2" fill="#FAEEDA"/>
+  <text class="label-note" x="525" y="1264">Image Resize Lambda logs</text>
+  <text class="label-note" x="525" y="1276">Assignment Worker Lambda logs</text>
+  <text class="label-note" x="525" y="1288">Daily Digest Lambda logs</text>
+  <text class="label-note" x="750" y="1264">EC2 application logs</text>
+  <text class="label-note" x="750" y="1276">ALB access logs</text>
+  <text class="label-note" x="750" y="1288">Auto Scaling events</text>
+</g>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- IAM SECTION -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<rect class="iam-bg" x="362" y="1460" width="900" height="110" rx="12"/>
+<text class="section-label" x="812" y="1478" text-anchor="middle" style="fill:#793333;font-size:11px">AWS IAM</text>
+<!-- IAM icon: shield with key -->
+<rect x="380" y="1483" width="40" height="48" rx="8" fill="#F7C1C1" stroke="#E24B4A" stroke-width="1.2"/>
+<path d="M390 1495 L400 1488 L410 1495 L410 1510 L400 1518 L390 1510 Z" fill="#E24B4A"/>
+<circle cx="400" cy="1503" r="3" fill="white"/>
+<line x1="400" y1="1506" x2="400" y2="1515" stroke="white" stroke-width="1.5"/>
+<line x1="400" y1="1511" x2="404" y2="1514" stroke="white" stroke-width="1.2"/>
+<!-- IAM note -->
+<text class="label-title" x="432" y="1495" style="font-size:10px">Least-Privilege IAM Roles</text>
+<text class="label-note" x="432" y="1507">EC2 role: DynamoDB RW, S3 PutObject, SNS Publish</text>
+<text class="label-note" x="432" y="1518">Image Resize Lambda: S3 GetObject (Originals) + PutObject (Resized)</text>
+<text class="label-note" x="432" y="1529">Worker Lambda: DynamoDB PutItem (ActivityLog), CloudWatch PutMetricData</text>
+<text class="label-note" x="432" y="1540">Daily Digest Lambda: DynamoDB Scan (Tasks), SNS Publish</text>
+<text class="label-note" x="432" y="1551">Dotted IAM lines â†’ each governed service (see diagram connections)</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- â•â•â• ARROWS / DATA FLOW CONNECTIONS â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+
+<!-- Users â†’ Cognito (auth) -->
+<path d="M115 90 L168 90" class="arr-purple" marker-end="url(#arr)"/>
+<text class="label-note" x="140" y="86" text-anchor="middle">auth</text>
+
+<!-- Users â†’ CloudFront -->
+<path d="M115 175 L168 178" class="arr-teal" marker-end="url(#arr)"/>
+<text class="label-note" x="140" y="171" text-anchor="middle">HTTPS</text>
+
+<!-- Cognito â†’ CloudFront (JWT token) -->
+<path d="M235 112 L235 150" class="arr-purple" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="244" y="136" style="font-size:8px">JWT</text>
+
+<!-- CloudFront â†’ ALB -->
+<path d="M300 179 L508 338" class="arr-teal" marker-end="url(#arr)"/>
+<text class="label-note" x="395" y="240" text-anchor="middle" style="font-size:8px">forwards request</text>
+
+<!-- ALB â†’ EC2 AZ1 -->
+<path d="M620 365 L465 508" class="arr-orange" marker-end="url(#arr)"/>
+
+<!-- ALB â†’ EC2 AZ2 -->
+<path d="M1000 365 L925 508" class="arr-orange" marker-end="url(#arr)"/>
+
+<!-- EC2 AZ1 â†’ DynamoDB -->
+<path d="M465 575 L465 628" class="arr-blue" marker-end="url(#arr)"/>
+<!-- EC2 AZ2 â†’ DynamoDB -->
+<path d="M925 575 L954 628" class="arr-blue" marker-end="url(#arr)"/>
+
+<!-- EC2 AZ1 â†’ S3 Originals (image upload) -->
+<path d="M405 548 L226 808" class="arr-orange" stroke-dasharray="5 3" marker-end="url(#arr)"/>
+<text class="label-note" x="275" y="670" text-anchor="middle" style="font-size:8px">upload image</text>
+
+<!-- S3 Originals â†’ Lambda Image Resize (trigger) -->
+<path d="M152 845 L152 878" class="arr-purple" marker-end="url(#arr)"/>
+<text class="label-note" x="168" y="865" style="font-size:8px">S3 trigger</text>
+
+<!-- Lambda Resize â†’ S3 Resized -->
+<path d="M152 942 L152 976" class="arr-green" marker-end="url(#arr)"/>
+<text class="label-note" x="168" y="962" style="font-size:8px">put thumbnail</text>
+
+<!-- EC2 AZ1 â†’ SNS (publish assignment) -->
+<path d="M405 548 L550 806" class="arr-red" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="450" y="720" text-anchor="middle" style="font-size:8px">publish event</text>
+
+<!-- SNS â†’ Email subscription -->
+<path d="M477 837 L477 873" class="arr-red" marker-end="url(#arr)"/>
+
+<!-- SNS â†’ SQS -->
+<path d="M550 806 L620 873" class="arr-red" marker-end="url(#arr)"/>
+<text class="label-note" x="592" y="843" style="font-size:8px">fan-out</text>
+
+<!-- SQS â†’ Worker Lambda -->
+<path d="M620 927 L620 958" class="arr-orange" marker-end="url(#arr)"/>
+<text class="label-note" x="637" y="946" style="font-size:8px">trigger</text>
+
+<!-- Worker Lambda â†’ DynamoDB (activity log) -->
+<path d="M632 1025 L954 736" class="arr-purple" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="810" y="870" style="font-size:8px">write activity log</text>
+
+<!-- Worker Lambda â†’ CloudWatch -->
+<path d="M632 992 L632 1078" class="arr-orange" stroke-dasharray="3 3" marker-end="url(#arr)"/>
+<text class="label-note" x="648" y="1040" style="font-size:8px">custom metrics</text>
+
+<!-- EventBridge â†’ Daily Digest Lambda -->
+<path d="M860 837 L860 873" class="arr-orange" marker-end="url(#arr)"/>
+<text class="label-note" x="876" y="858" style="font-size:8px">cron trigger</text>
+
+<!-- Daily Digest Lambda â†’ DynamoDB (scan tasks) -->
+<path d="M852 937 L731 721" class="arr-purple" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="808" y="840" style="font-size:8px" text-anchor="middle">scan due tasks</text>
+
+<!-- Daily Digest Lambda â†’ SNS (send digest) -->
+<path d="M820 906 L550 820" class="arr-red" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="680" y="858" text-anchor="middle" style="font-size:8px">send digest email</text>
+
+<!-- CW Alarm â†’ SNS -->
+<path d="M700 1155 L550 856" class="arr-red" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+<text class="label-note" x="620" y="1000" style="font-size:8px" text-anchor="middle">alarm â†’ notify</text>
+
+<!-- EC2 â†’ CloudWatch Logs -->
+<path d="M465 597 L465 1228" class="arr" stroke-dasharray="3 3" marker-end="url(#arr)"/>
+<text class="label-note" x="420" y="940" style="font-size:7px">logs</text>
+
+<!-- IAM dotted lines to services -->
+<line x1="432" y1="1507" x2="465" y2="1462" class="arr-dot" stroke-dasharray="3 3" marker-end="url(#arr-dot)"/>
+<line x1="500" y1="1490" x2="620" y2="1462" class="arr-dot" stroke-dasharray="3 3" marker-end="url(#arr-dot)"/>
+<line x1="560" y1="1490" x2="810" y2="1462" class="arr-dot" stroke-dasharray="3 3" marker-end="url(#arr-dot)"/>
+
+<!-- Email sub â†’ back to Users icon (notification) -->
+<path d="M405 901 L120 180" class="arr-red" stroke-dasharray="5 3" stroke-width="0.9" marker-end="url(#arr)"/>
+<text class="label-note" x="240" y="540" text-anchor="middle" style="font-size:7px;fill:#A32D2D">email notification</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- LEGEND -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<rect x="1020" y="775" width="340" height="295" rx="10" fill="white" stroke="#B4B2A9" stroke-width="1"/>
+<rect x="1020" y="775" width="340" height="24" rx="10" fill="#888780"/>
+<rect x="1020" y="791" width="340" height="8" fill="#888780"/>
+<text x="1190" y="792" text-anchor="middle" style="font-size:10px;font-weight:500;fill:white">Connection Legend</text>
+
+<line x1="1036" y1="822" x2="1080" y2="822" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="826">User request path (CloudFront â†’ ALB â†’ EC2)</text>
+
+<line x1="1036" y1="845" x2="1080" y2="845" stroke="#534AB7" stroke-width="1.5" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="849">DB read/write (EC2 â†” DynamoDB)</text>
+
+<line x1="1036" y1="868" x2="1080" y2="868" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="872">Event / notification (SNS fan-out)</text>
+
+<line x1="1036" y1="891" x2="1080" y2="891" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="895">Image upload / Lambda trigger</text>
+
+<line x1="1036" y1="914" x2="1080" y2="914" stroke="#3B6D11" stroke-width="1.5" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="918">Thumbnail write (Resize Lambda â†’ S3)</text>
+
+<line x1="1036" y1="937" x2="1080" y2="937" stroke="#888" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="941">Logs / metrics (to CloudWatch)</text>
+
+<line x1="1036" y1="960" x2="1080" y2="960" stroke="#888" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr-dot)"/>
+<text class="label-note" x="1088" y="964">IAM policy governance (dotted)</text>
+
+<line x1="1036" y1="983" x2="1080" y2="983" stroke="#A32D2D" stroke-width="0.9" stroke-dasharray="5 3" marker-end="url(#arr)"/>
+<text class="label-note" x="1088" y="987">Alarm â†’ SNS notification</text>
+
+<text class="label-note" x="1036" y="1010" style="fill:#634AB7">â˜…  Tasks table has GSIs on teamId</text>
+<text class="label-note" x="1036" y="1022" style="fill:#634AB7">   and assigneeId for efficient queries</text>
+<text class="label-note" x="1036" y="1038" style="fill:#854F0B">â–²  Originals S3 versioning enabled â€”</text>
+<text class="label-note" x="1036" y="1050" style="fill:#854F0B">   old image versions retained on update</text>
+
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<!-- DIAGRAM TITLE -->
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<rect x="362" y="24" width="900" height="46" rx="10" fill="#2C2C2A"/>
+<text x="812" y="43" text-anchor="middle" style="font-size:15px;font-weight:500;fill:white">Mini-Jira â€” AWS High-Availability Architecture</text>
+<text x="812" y="60" text-anchor="middle" style="font-size:10px;fill:#B4B2A9">Multi-AZ deployment Â· Node.js Â· DynamoDB Â· S3 Â· Lambda Â· SNS Â· SQS Â· EventBridge Â· CloudWatch Â· Cognito</text>
+
+</svg>
