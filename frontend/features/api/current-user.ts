@@ -1,8 +1,8 @@
 import { usersApiClient } from './client';
 
-import type { CurrentUserResponse } from '../types';
+import type { CurrentUserApiResponse, CurrentUserResponse } from '../types';
 
 export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
-  const response = await usersApiClient.get<CurrentUserResponse>('/users/me');
-  return response.data;
+  const response = await usersApiClient.get<CurrentUserApiResponse>('/users/me');
+  return response.data.data;
 }

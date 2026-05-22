@@ -11,6 +11,12 @@ export interface CurrentUserResponse {
   profile: UserProfile;
 }
 
+export interface CurrentUserApiResponse {
+  success: boolean;
+  message: string;
+  data: CurrentUserResponse;
+}
+
 export interface UserSummary {
   userId: string;
   email: string;
@@ -35,7 +41,13 @@ export interface UserSession {
   accessToken?: string;
   idToken?: string;
   profile?: UserProfile;
-  mode: 'api' | 'mock';
+  mode: 'api';
+}
+
+export interface UpdateProfileApiResponse {
+  success: boolean;
+  message: string;
+  data: UserProfile;
 }
 
 export type UserSessionState =

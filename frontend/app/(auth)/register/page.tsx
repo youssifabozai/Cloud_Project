@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertCircle, ArrowRight, Box, Briefcase, Key, Mail, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import type { UserRole } from "@/types";
 
 export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
@@ -17,6 +18,17 @@ export default function RegisterPage() {
   const [registerMode, setRegisterMode] = useState<"api" | "mock">("mock");
   const auth = useAuth();
   const theme = auth.theme;
+  const normalizeRole = (value: "Manager" | "Employee" | "Admin"): UserRole => {
+    if (value === "Manager") {
+      return "MANAGER";
+    }
+
+    if (value === "Admin") {
+      return "ADMIN";
+    }
+
+    return "EMPLOYEE";
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,9 +38,9 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await auth.register({ email, password, fullName, role: role.toUpperCase() as any, team });
-    } catch (err: any) {
-      setError(err.message || "Registration failed");
+      await auth.register({ email, password, fullName, role: normalizeRole(role), team });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed");
       setLoading(false);
     }
   };
@@ -111,7 +123,7 @@ export default function RegisterPage() {
                 <span className="text-[10px] uppercase text-[#475569]">Corporate Role</span>
                 <select
                   value={role}
-                  onChange={(e) => setRole(e.target.value as any)}
+                  onChange={(e) => setRole(e.target.value as "Manager" | "Employee" | "Admin")}
                   className="rounded-2xl border border-white/70 bg-white/44 p-3 outline-none focus:ring-2 focus:ring-[#C832FF]/35"
                 >
                   <option value="Employee">Employee</option>

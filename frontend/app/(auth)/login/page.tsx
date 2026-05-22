@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight, Box, ChevronRight, Key, Mail, UserCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import type { UserRole } from "@/types";
 
 const INITIAL_USERS = [
   { userId: "user-ali", name: "Ali Bin-Ahmed", role: "Manager", teamId: "" },
@@ -24,6 +25,16 @@ export default function LoginPage() {
   const [loginMode, setLoginMode] = useState<"api" | "mock">("mock");
   const auth = useAuth();
   const theme = auth.theme;
+
+  const toUserRole = (value: "Manager" | "Employee" | "Admin"): UserRole => {
+    if (value === "Manager") {
+      return "MANAGER";
+    }
+    if (value === "Admin") {
+      return "ADMIN";
+    }
+    return "EMPLOYEE";
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,7 +71,7 @@ export default function LoginPage() {
             email,
             password: "mock",
             fullName: sessionUser.name,
-            role: sessionUser.role as any,
+            role: toUserRole(sessionUser.role as "Manager" | "Employee" | "Admin"),
             team: sessionUser.teamId,
           });
         }

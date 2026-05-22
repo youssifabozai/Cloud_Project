@@ -14,16 +14,19 @@ export interface DistributionMetric {
   priorityDistribution?: Record<string, number>;
 }
 
+export type TimeSeriesPoint = Record<string, number | string | null>;
+export type BurndownPoint = Record<string, number | string | null>;
+
 export const metricsService = {
   getDashboardSummary: () =>
     api.get<DashboardSummary>('/metrics/dashboard/summary'),
 
   getTimeSeries: () =>
-    api.get<any[]>('/metrics/visualizations/time-series'),
+    api.get<TimeSeriesPoint[]>('/metrics/visualizations/time-series'),
 
   getDistribution: () =>
     api.get<DistributionMetric>('/metrics/visualizations/distribution'),
 
   getBurndown: (projectId: string) =>
-    api.get<any[]>(`/metrics/visualizations/burndown?projectId=${encodeURIComponent(projectId)}`),
+    api.get<BurndownPoint[]>(`/metrics/visualizations/burndown?projectId=${encodeURIComponent(projectId)}`),
 };

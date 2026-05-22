@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -69,6 +69,13 @@ interface ActivityLog {
   actionType: string;
   message: string;
   createdAt: string;
+}
+
+interface DashboardUser {
+  userId: string;
+  name: string;
+  role: string;
+  teamId: string;
 }
 
 // Seed Data
@@ -182,6 +189,27 @@ const INITIAL_COMMENTS: Comment[] = [
   }
 ];
 
+const INITIAL_ACTIVITIES: ActivityLog[] = [
+  {
+    logId: "act-1",
+    taskId: "task-d",
+    taskTitle: "Enforce DynamoDB Index Team Query",
+    actorName: "Omar Farooq",
+    actionType: "STATUS_CHANGED",
+    message: "Omar Farooq moved task to Done",
+    createdAt: "2026-05-21T09:00:00.000Z"
+  },
+  {
+    logId: "act-2",
+    taskId: "task-b",
+    taskTitle: "Connect SQS Queue & SNS Fanout Fan",
+    actorName: "Ali Bin-Ahmed",
+    actionType: "ASSIGNED",
+    message: "Ali Bin-Ahmed assigned task to Omar Farooq",
+    createdAt: "2026-05-20T12:00:00.000Z"
+  }
+];
+
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -192,8 +220,19 @@ export default function DashboardPage() {
   const setTheme = auth.setTheme;
 
   // Dynamic user list combining seed data and custom registered sandbox accounts
-  const [userList, setUserList] = useState(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState<typeof INITIAL_USERS[0] | null>(null);
+  const userList = INITIAL_USERS;
+  const currentUser = useMemo<DashboardUser | null>(() => {
+    if (!auth.session) {
+      return null;
+    }
+
+    return {
+      userId: auth.session.userId,
+      name: auth.session.name,
+      role: auth.session.role,
+      teamId: auth.session.teamId,
+    };
+  }, [auth.session]);
 
   // Router view controls
   const [activeTab, setActiveTab] = useState<'dashboard' | 'board' | 'projects' | 'teams' | 'activity'>('dashboard');
@@ -204,7 +243,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
   const [comments, setComments] = useState<Comment[]>(INITIAL_COMMENTS);
-  const [activities, setActivities] = useState<ActivityLog[]>([]);
+  const [activities, setActivities] = useState<ActivityLog[]>(INITIAL_ACTIVITIES);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   // New task inputs
@@ -230,21 +269,10 @@ export default function DashboardPage() {
       router.push('/login');
       return;
     }
-    const s = auth.session;
-    setCurrentUser({
-      userId: s.userId,
-      name: s.name,
-      role: s.role,
-      teamId: s.teamId,
-    } as any);
 
     // Merge any runtime-only custom users from AuthContext mock bank
     try {
       // If AuthContext keeps a mock bank inside, we don't persist it here — keep demo users transient
-      setUserList((prev) => {
-        const combined = [...prev];
-        return combined;
-      });
     } catch {
       // ignore
     }
@@ -253,31 +281,6 @@ export default function DashboardPage() {
     const root = window.document.documentElement;
     if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
   }, [auth.isLoading, auth.session, theme, router]);
-
-  // Seed initial activities
-  useEffect(() => {
-    const log: ActivityLog[] = [
-      {
-        logId: "act-1",
-        taskId: "task-d",
-        taskTitle: "Enforce DynamoDB Index Team Query",
-        actorName: "Omar Farooq",
-        actionType: "STATUS_CHANGED",
-        message: "Omar Farooq moved task to Done",
-        createdAt: "2026-05-21T09:00:00.000Z"
-      },
-      {
-        logId: "act-2",
-        taskId: "task-b",
-        taskTitle: "Connect SQS Queue & SNS Fanout Fan",
-        actorName: "Ali Bin-Ahmed",
-        actionType: "ASSIGNED",
-        message: "Ali Bin-Ahmed assigned task to Omar Farooq",
-        createdAt: "2026-05-20T12:00:00.000Z"
-      }
-    ];
-    setActivities(log);
-  }, []);
 
   if (!currentUser) {
     return (
@@ -511,7 +514,11 @@ export default function DashboardPage() {
         {/* Sidebar Footer (Profile + Theme switcher) */}
         <div className="flex flex-col gap-4 border-t border-[var(--border-color)] pt-4">
           {/* Active user status */}
-          <div className="flex items-center gap-3 px-1">
+          <button
+            type="button"
+            onClick={() => router.push('/dashboard/profile')}
+            className="flex items-center gap-3 rounded-2xl px-2 py-1 text-left transition-all hover:bg-white/32 hover:shadow-sm"
+          >
             <div className="cloud-logo h-10 w-10 rounded-full text-white flex items-center justify-center font-bold relative shadow-md">
               {currentUser.name.charAt(0)}
               <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border-2 border-[var(--bg-secondary)]"></span>
@@ -522,7 +529,7 @@ export default function DashboardPage() {
                 {currentUser.role} {currentUser.teamId ? `• ${currentUser.teamId}` : ""}
               </span>
             </div>
-          </div>
+          </button>
 
           <div className="flex items-center justify-between gap-3 px-1">
             <ThemeToggle
@@ -563,7 +570,6 @@ export default function DashboardPage() {
                   if (selected) {
                     // Use AuthContext quick-switch for mock users
                     auth.switchUser(selected.userId);
-                    setCurrentUser(selected);
                   }
                 }}
                 className="bg-transparent text-[11px] font-bold text-[#A21BF4] focus:outline-none cursor-pointer border-none"
@@ -1328,7 +1334,7 @@ export default function DashboardPage() {
                   <label className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wide">Priority Rating</label>
                   <select
                     value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as any)}
+                    onChange={(e) => setNewPriority(e.target.value as Task['priority'])}
                     className="p-2 w-full rounded-xl bg-[var(--bg-primary)] border border-[var(--border-color)] text-xs"
                   >
                     <option value="Low">Low</option>
@@ -1416,4 +1422,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

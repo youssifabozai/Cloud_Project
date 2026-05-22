@@ -12,6 +12,8 @@ import type { UserSummary } from '../types/user.types';
 export function useUsers() {
   const { session } = useUserSession();
   const rbac = useRbac(session?.role ?? null);
+  const sessionTeamId = session?.teamId ?? '';
+  const isEmployee = rbac.isEmployee;
 
   const [items, setItems] = useState<UserSummary[]>([]);
   const [total, setTotal] = useState<number>(0);
@@ -30,8 +32,8 @@ export function useUsers() {
       let filtered = data.items ?? [];
 
       // Enforce team isolation for employees on the client side as well
-      if (rbac.isEmployee && session?.teamId) {
-        filtered = filtered.filter((u) => u.teamId === session.teamId);
+      if (isEmployee && sessionTeamId) {
+        filtered = filtered.filter((u) => u.teamId === sessionTeamId);
       }
 
       setItems(filtered);
@@ -42,10 +44,16 @@ export function useUsers() {
     } finally {
       setIsLoading(false);
     }
-  }, [search, roleFilter, rbac.isEmployee, session?.teamId]);
+  }, [search, roleFilter, isEmployee, sessionTeamId]);
 
   useEffect(() => {
-    void load();
+    const timeoutId = window.setTimeout(() => {
+      void load();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [load]);
 
   const refresh = useCallback(() => {

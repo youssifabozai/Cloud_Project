@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────
 
 export type UserRole      = 'MANAGER' | 'EMPLOYEE' | 'ADMIN';
-export type AppMode       = 'api' | 'mock';
+export type AppMode       = 'api';
 export type TaskStatus    = 'To Do' | 'In Progress' | 'In Review' | 'Done';
 export type TaskPriority  = 'Low' | 'Medium' | 'High' | 'Urgent';
 export type ProjectStatus = 'Active' | 'On Hold' | 'Completed';
@@ -80,6 +80,8 @@ export interface UserProfile {
   role:      UserRole;
   teamId:    string;
   fullName?: string;
+  avatar?:   string;
+  phoneNumber?: string;
 }
 
 // ─── API Shapes ───────────────────────────────────────────────
@@ -147,5 +149,6 @@ export interface UpdateProjectDto {
 
 export interface UpdateProfileDto {
   fullName?: string;
-  email?:    string;
+  avatar?:   string;
+  phoneNumber?: string;
 }
